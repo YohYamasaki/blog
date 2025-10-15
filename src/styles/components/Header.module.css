@@ -1,0 +1,128 @@
+.header {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: var(--header-height);
+  box-shadow: var(--shadow-md);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0 var(--size-m);
+  z-index: 1;
+}
+
+.title {
+  font-size: var(--text-l);
+  font-family: "AveriaSerifLibre", serif;
+  font-weight: 400;
+  text-decoration: none;
+  color: var(--on-surface);
+}
+
+.linkWrap {
+  display: flex;
+  align-items: center;
+  gap: var(--size-m);
+}
+
+.verticalLine {
+  width: 1px;
+  height: 20px;
+  position: relative;
+  top: 2px;
+  background-color: var(--outline-variant);
+}
+
+.links {
+  display: flex;
+  align-items: center;
+  gap: var(--size-m);
+}
+
+.sideMenuToggleButton {
+  display: none;
+  background: transparent;
+  border: none;
+  flex-direction: column;
+  gap: 8px;
+  cursor: pointer;
+  position: fixed;
+  top: 16px;
+  left: 16px;
+  width: 40px;
+  height: 32px;
+  transform: rotate(0deg);
+  transition: 0.5s ease-in-out;
+  z-index: 2;
+}
+
+.sideMenuToggleButton span {
+  display: block;
+  position: absolute;
+  height: 3px;
+  width: 100%;
+  background: var(--primary-container);
+  border-radius: 9px;
+  opacity: 1;
+  left: 0;
+  transform: rotate(0deg);
+  -webkit-transition: 0.25s ease-in-out;
+  -moz-transition: 0.25s ease-in-out;
+  -o-transition: 0.25s ease-in-out;
+  transition: 0.25s ease-in-out;
+}
+
+.sideMenuToggleButton span:nth-child(1) {
+  top: 0;
+}
+
+.sideMenuToggleButton span:nth-child(2),
+.sideMenuToggleButton span:nth-child(3) {
+  top: 12px;
+}
+
+.sideMenuToggleButton span:nth-child(4) {
+  top: 24px;
+}
+
+.sideMenuToggleButton.open span {
+  height: 4px;
+}
+
+.sideMenuToggleButton.open span:nth-child(1) {
+  top: 18px;
+  width: 0;
+  left: 50%;
+}
+
+.sideMenuToggleButton.open span:nth-child(2) {
+  transform: rotate(45deg);
+}
+
+.sideMenuToggleButton.open span:nth-child(3) {
+  transform: rotate(-45deg);
+}
+
+.sideMenuToggleButton.open span:nth-child(4) {
+  top: 18px;
+  width: 0;
+  left: 50%;
+}
+
+.langSelector {
+  display: flex;
+  justify-content: center;
+  gap: var(--size-m);
+  font-size: var(--text-base);
+}
+
+@media (max-width: 1200px) {
+  .sideMenu {
+    left: calc(-1 * var(--sideMenu-width));
+  }
+
+  .sideMenuToggleButton {
+    display: flex;
+  }
+}

@@ -1,0 +1,21 @@
+---
+import { ALL_IMAGES } from "../../utils/constants";
+import { Picture } from "astro:assets";
+
+type Props = {
+  src: string;
+  alt: string;
+};
+
+const { src, alt, ...rest } = Astro.props;
+
+if (!ALL_IMAGES[src]) {
+  throw new Error(
+    `"${src}" does not exist in glob: "src/assets/**/*.{jpeg,jpg,png,gif}"`
+  );
+}
+
+const image = ALL_IMAGES[src]();
+---
+
+<Picture src={image} formats={["avif", "webp"]} {alt} {...rest} />

@@ -1,0 +1,15 @@
+.link {
+  display: inline-block;
+  text-decoration: none;
+  color: var(--on-surface);
+}
+
+.link:hover {
+  opacity: 1;
+  background-color: var(--surface-dim);
+}
+
+.link.active {
+  font-weight: bolder;
+  background-color: var(--tertiary-container-light);
+}

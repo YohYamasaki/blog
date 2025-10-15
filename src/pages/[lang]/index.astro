@@ -1,0 +1,22 @@
+---
+import { getCollection } from "astro:content";
+import BlogCard from "../../components/BlogCard.astro";
+import { langParams } from "../../i18n/ui";
+import BaseSite from "../../layouts/BaseSite.astro";
+
+export async function getStaticPaths() {
+  return langParams;
+}
+
+const { lang } = Astro.params;
+
+const posts = (
+  await getCollection("blog", (entry) => entry.id.includes(lang))
+).sort((a, b) => b.data.pubDate.valueOf() - a.data.pubDate.valueOf());
+---
+
+<BaseSite>
+  <div>
+    {posts.map((p) => <BlogCard post={p} />)}
+  </div>
+</BaseSite>

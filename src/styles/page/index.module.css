@@ -1,0 +1,29 @@
+.bodyWrap {
+  transition: margin 800ms;
+  margin-left: 0;
+}
+
+.mainWrap {
+  display: flex;
+  flex-direction: column;
+  gap: var(--size-4xl);
+}
+
+.bg {
+  position: fixed;
+  bottom: 0;
+  right: 0;
+  width: 80%;
+  max-width: 1000px;
+  z-index: -1;
+}
+
+@media (min-width: 1200px) {
+  .bodyWrap {
+    margin-left: var(--sideMenu-width);
+  }
+
+  .bg {
+    width: 60%;
+  }
+}

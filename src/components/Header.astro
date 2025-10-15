@@ -1,0 +1,20 @@
+---
+import s from "../styles/components/Header.module.css";
+import Link from "./common/Link.astro";
+import HeaderLink from "./MenuLink.astro";
+---
+
+<nav class={s.header}>
+  <h2><Link class={s.title} href="/">yayoi's blog</Link></h2>
+  <div class={s.linkWrap}>
+    <div class={s.links}>
+      <HeaderLink href="/">Posts</HeaderLink>
+      <HeaderLink href="/about">About</HeaderLink>
+    </div>
+    <span class={s.verticalLine}></span>
+    <div class={s.langSelector}>
+      <a href="/ja">Japanese</a>
+      <a href="/en">English</a>
+    </div>
+  </div>
+</nav>
