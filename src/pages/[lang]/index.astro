@@ -3,6 +3,7 @@ import { getCollection } from "astro:content";
 import BlogCard from "../../components/BlogCard.astro";
 import { langParams } from "../../i18n/ui";
 import BaseSite from "../../layouts/BaseSite.astro";
+import s from "../../styles/page/index.module.css";
 
 export async function getStaticPaths() {
   return langParams;
@@ -11,12 +12,18 @@ export async function getStaticPaths() {
 const { lang } = Astro.params;
 
 const posts = (
-  await getCollection("blog", (entry) => entry.id.includes(lang))
+  await getCollection("blog", (entry) => entry.id.startsWith(lang))
 ).sort((a, b) => b.data.pubDate.valueOf() - a.data.pubDate.valueOf());
 ---
 
 <BaseSite>
-  <div>
-    {posts.map((p) => <BlogCard post={p} />)}
+  <h1 class={s.title}>Posts</h1>
+  <div class={s.blogWrap}>
+    {posts
+      .sort(
+        (a, b) =>
+          a.data.pubDate.getMilliseconds() - b.data.pubDate.getMilliseconds()
+      )
+      .map((p) => <BlogCard post={p} />)}
   </div>
 </BaseSite>

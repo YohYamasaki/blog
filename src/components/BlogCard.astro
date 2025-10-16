@@ -1,5 +1,6 @@
 ---
-import { CollectionEntry } from "astro:content";
+import { type CollectionEntry } from "astro:content";
+import s from "../styles/components/BlogCard.module.css";
 import FormattedDate from "./FormattedDate.astro";
 
 type Props = {
@@ -10,15 +11,19 @@ const { post } = Astro.props;
 const { lang } = Astro.params;
 ---
 
-<div>
-  <a href={`/${lang}/blog/${post.id.replace(`${lang}-`, "")}`}>
-    {post.data.image && (
-      <img src={post.data.image} alt={post.data.title} width="100%" />
-    )}
-    <h2 class="title">{post.data.title}</h2>
-    <span class="date">
-      <FormattedDate date={post.data.pubDate} />
-    </span>
-    <p>{post.data.description}</p>
+<div class={s.blogCard}>
+  <a href={`/${lang}/blog/${post.id.replace(`${lang}/`, "")}`}>
+    <div class={s.body}>
+      <div class={s.meta}>
+        <span class={s.tagWrap}>
+          {post.data.tags?.map((tag) => <span class={s.tag}>{tag}</span>)}
+        </span>
+        <span class={s.date}>
+          <FormattedDate date={post.data.pubDate} />
+        </span>
+      </div>
+      <h2 class={s.title}>{post.data.title}</h2>
+      <p class={s.desc}>{post.data.description}</p>
+    </div>
   </a>
 </div>

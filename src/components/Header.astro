@@ -1,20 +1,66 @@
 ---
+import { LANGUAGES } from "../i18n/ui";
+import { getLangFromUrl } from "../i18n/utils";
 import s from "../styles/components/Header.module.css";
 import Link from "./common/Link.astro";
 import HeaderLink from "./MenuLink.astro";
+import ThemeToggleSvg from "/src/assets/images/theme-toggle.svg?raw";
+import BirdIcon from "/src/assets/images/bird-icon.svg?raw";
+
+const currentLang = getLangFromUrl(Astro.url);
+const notCurrentLang = currentLang === "en" ? "ja" : "en";
 ---
 
 <nav class={s.header}>
-  <h2><Link class={s.title} href="/">yayoi's blog</Link></h2>
-  <div class={s.linkWrap}>
-    <div class={s.links}>
+  <Link class={s.title} href="/"
+    ><span class={s.icon} set:html={BirdIcon}></span>yayoi's blog
+  </Link>
+
+  <div class={s.links}>
+    <button
+      id="menu-btn"
+      class={s.hamburger}
+      aria-label="menu"
+      aria-expanded="false"
+    >
+      <span class={s.bar}></span>
+      <span class={s.bar}></span>
+    </button>
+
+    <div id="linkWrap" class={s.linkWrap}>
       <HeaderLink href="/">Posts</HeaderLink>
       <HeaderLink href="/about">About</HeaderLink>
-    </div>
-    <span class={s.verticalLine}></span>
-    <div class={s.langSelector}>
-      <a href="/ja">Japanese</a>
-      <a href="/en">English</a>
+      <span class={s.verticalLine}></span>
+      <div class={s.langSelector}>
+        <a href={`/${notCurrentLang}`}>{LANGUAGES[notCurrentLang]}</a>
+      </div>
+      <div>
+        <span id="themeToggle" class={s.themeToggle} set:html={ThemeToggleSvg}
+        ></span>
+      </div>
     </div>
   </div>
 </nav>
+
+<script>
+  const toggleEl = document.getElementById("themeToggle");
+  function toggleTheme() {
+    const next =
+      document.body.getAttribute("data-theme") === "dark" ? "light" : "dark";
+    document.body.setAttribute("data-theme", next);
+    localStorage.setItem("theme", next);
+  }
+  toggleEl?.addEventListener("click", toggleTheme);
+
+  const menuBtnEl = document.getElementById("menu-btn");
+  function toggleMenu() {
+    const menuBtn = document.getElementById("menu-btn");
+    const linkWrap = document.getElementById("linkWrap");
+    const expanded = menuBtn?.getAttribute("aria-expanded") === "true" || false;
+    menuBtn?.setAttribute("aria-expanded", !expanded + "");
+    if (linkWrap) {
+      linkWrap.style.display = expanded ? "none" : "flex";
+    }
+  }
+  menuBtnEl?.addEventListener("click", toggleMenu);
+</script>

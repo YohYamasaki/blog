@@ -2,13 +2,21 @@
 import mdx from "@astrojs/mdx";
 import sitemap from "@astrojs/sitemap";
 import solidJs from "@astrojs/solid-js";
-import vercelStatic from "@astrojs/vercel/static";
 import { defineConfig } from "astro/config";
+import rehypeKatex from "rehype-katex";
+import remarkMath from "remark-math";
 
 // https://astro.build/config
 export default defineConfig({
-  site: "https://yutohosaka.com",
-  integrations: [mdx(), sitemap(), solidJs()],
+  site: "https://yayo1.com",
+  integrations: [
+    mdx({
+      remarkPlugins: [remarkMath],
+      rehypePlugins: [[rehypeKatex]],
+    }),
+    sitemap(),
+    solidJs(),
+  ],
   trailingSlash: "never",
   build: {
     assets: "assets",
@@ -18,12 +26,7 @@ export default defineConfig({
     port: 8080,
   },
   output: "static",
-  adapter: vercelStatic({
-    webAnalytics: {
-      enabled: true,
-    },
-  }),
   redirects: {
-    "/": "/en",
+    "/": "/ja",
   },
 });

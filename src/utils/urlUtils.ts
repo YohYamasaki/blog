@@ -1,4 +1,4 @@
-import { LANGUAGES } from "../i18n/ui.ts";
+import { LANGUAGES } from "../i18n/ui.js";
 
 /**
  * Remove trailing slash from the given string.
@@ -10,16 +10,25 @@ export function removeTrailingSlash(str: string): string {
 }
 
 /**
- * Remove language from the given slug.
- * @param slug - slug of content collection
- * @return lang removed slug
+ * Remove language from the given id.
+ * @param id - id of content collection
+ * @return lang removed id
  */
-export function removeLangFromContentSlug(slug: string): string {
-  if (Object.keys(LANGUAGES).some((lang) => slug.startsWith(lang))) {
-    return slug.slice(3);
+export function removeLangFromContentId(id: string): string {
+  if (Object.keys(LANGUAGES).some((lang) => id.startsWith(lang))) {
+    return id.slice(3);
   } else {
-    return slug;
+    return id;
   }
+}
+
+/**
+ * Get language prefix from the given content id.
+ * @param id - id of content collection
+ * @return lang path
+ */
+export function getLangPathFromContentId(id: string) {
+  return id.substring(0, 3);
 }
 
 /**

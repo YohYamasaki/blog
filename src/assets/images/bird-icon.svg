@@ -1,7 +1,8 @@
 <?xml version="1.0" encoding="iso-8859-1"?>
+<!-- Uploaded to: SVG Repo, www.svgrepo.com, Generator: SVG Repo Mixer Tools -->
 <!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN" "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">
 <svg version="1.1" id="Capa_1" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" 
-	  viewBox="0 0 243.636 243.637"
+	 viewBox="0 0 243.636 243.637"
 	 xml:space="preserve">
 <g>
 	<path fill="currentColor" id="bird-icon" d="M234.785,232.69c-0.857-4.049-21.268-99.556-62.932-140.308c-9.629-9.413-19.122-16.701-28.467-22.088
@@ -19,10 +20,5 @@
 		c0.647,2.329,12.176,42.221,49.216,74.264c-23.867-8.802-48.521-20.635-63.907-35.684C77.904,153.77,68.254,137.751,66.585,123.116
 		z"/>
 </g>
-<style>
-        path { fill: #161d1b; }
-        @media (prefers-color-scheme: dark) {
-            path { fill: #dde4e1; }
-        }
-    </style>
+
 </svg>

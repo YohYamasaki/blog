@@ -1,0 +1,38 @@
+---
+import s from "../../styles/page/about.module.css";
+
+import githubIcon from "../../assets/images/about/github-icon.svg?raw";
+import zennIcon from "../../assets/images/about/zenn-icon.svg?raw";
+import DynamicPicture from "../../components/common/DynamicPicture.astro";
+import { langParams } from "../../i18n/ui";
+import { getLangFromUrl, useTranslations } from "../../i18n/utils";
+import BaseSite from "../../layouts/BaseSite.astro";
+
+export async function getStaticPaths() {
+  return langParams;
+}
+
+const t = useTranslations(getLangFromUrl(Astro.url));
+---
+
+<BaseSite>
+  <div class={s.about}>
+    <DynamicPicture
+      src="/src/assets/images/about/plastic-duck.jpg"
+      alt="A plastic duck"
+      class={s.image}
+    />
+    <h1 class={s.title}>Yohei Yamasaki<br />(yayoi)</h1>
+    <div class={s.links}>
+      <a href="https://github.com/YohYamasaki" target="_blank"
+        ><span class={s.linkIcon} set:html={githubIcon}></span>
+      </a>
+      <a href="https://zenn.dev/yayo1" target="_blank"
+        ><span class={s.linkIcon} set:html={zennIcon}></span>
+      </a>
+    </div>
+    <p class={s.description}>
+      {t("about.mainText")}
+    </p>
+  </div>
+</BaseSite>

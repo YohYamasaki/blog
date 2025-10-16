@@ -1,6 +1,6 @@
 export const LANGUAGES = {
   en: "English",
-  ja: "Japanese",
+  ja: "日本語",
 };
 
 export type Language = keyof typeof LANGUAGES;
@@ -14,18 +14,17 @@ export const langParams = Object.keys(LANGUAGES).map((lang) => ({
   params: { lang: lang as Language },
 }));
 
-type Translation = {
-  [key: string]: string;
-};
+type TranslationKey = "about.mainText";
 
-export const translations: { [key: string]: Translation } = {
+type Translation = Record<TranslationKey, string>;
+
+export const translations: Record<Language, Translation> = {
   en: {
-    "nav.home": "Home",
-    "nav.about": "About",
-    "nav.twitter": "Twitter",
+    "about.mainText":
+      "I am a software engineer and a computer science student based in Germany with a keen interest in the intersection of web technology and 2D graphics.",
   },
   ja: {
-    "nav.home": "Accueil",
-    "nav.about": "À propos",
+    "about.mainText":
+      "ドイツでWEBエンジニアをしています。パートタイムのコンピューターサイエンス学生でもある。2DグラフィックスとWEB技術に興味があります。",
   },
 } as const;

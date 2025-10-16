@@ -1,0 +1,46 @@
+---
+import s from "../../../styles/page/blog/[...slug].module.css";
+
+import { type CollectionEntry, getCollection, render } from "astro:content";
+import DynamicPicture from "../../../components/common/DynamicPicture.astro";
+import FormattedDate from "../../../components/FormattedDate.astro";
+import BaseSite from "../../../layouts/BaseSite.astro";
+import {
+  getLangPathFromContentId,
+  removeLangFromContentId,
+} from "../../../utils/urlUtils";
+
+export async function getStaticPaths() {
+  const posts = await getCollection("blog");
+  return posts.map((post) => ({
+    params: {
+      lang: getLangPathFromContentId(post.id),
+      slug: removeLangFromContentId(post.id),
+    },
+    props: post,
+  }));
+}
+
+type Props = CollectionEntry<"blog">;
+
+const post = Astro.props;
+const { Content } = await render(post);
+---
+
+<BaseSite>
+  <article class={s.post}>
+    <hgroup class={s.hgroup}>
+      <span class={s.titleWrap}>
+        <span class={s.date}>
+          <FormattedDate date={post.data.pubDate} />
+        </span>
+        <h1 class={s.title}>{post.data.title}</h1>
+        <p>{post.data.description}</p>
+      </span>
+    </hgroup>
+    <hr class={s.hr} />
+    <div class={s.body}>
+      <Content components={{ img: DynamicPicture }} />
+    </div>
+  </article>
+</BaseSite>

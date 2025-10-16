@@ -8,8 +8,3 @@
   opacity: 1;
   background-color: var(--surface-dim);
 }
-
-.link.active {
-  font-weight: bolder;
-  background-color: var(--tertiary-container-light);
-}

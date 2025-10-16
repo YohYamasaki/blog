@@ -1,4 +1,4 @@
 User-agent: *
 Allow: /
 
-Sitemap: https://yutohosaka.com/sitemap-index.xml
+Sitemap: https://yayo1.com/sitemap-index.xml

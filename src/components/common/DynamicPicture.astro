@@ -1,11 +1,12 @@
 ---
-import { ALL_IMAGES } from "../../utils/constants";
+import { type HTMLAttributes } from "astro/types";
 import { Picture } from "astro:assets";
+import { ALL_IMAGES } from "../../utils/constants";
 
 type Props = {
   src: string;
   alt: string;
-};
+} & HTMLAttributes<"picture">;
 
 const { src, alt, ...rest } = Astro.props;
 

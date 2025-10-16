@@ -20,11 +20,20 @@ const baseHeadProps = Astro.props;
     <div id="body-wrap" class={s.bodyWrap}>
       <MenuBar />
       <main>
-        <div class={s.mainWrap}>
-          <slot></slot>
-          <Footer />
-        </div>
+        <slot></slot>
+        <Footer />
       </main>
     </div>
+    <script>
+      const saved = localStorage.getItem("theme");
+      if (saved) {
+        document.body.setAttribute("data-theme", saved);
+      } else if (
+        window.matchMedia &&
+        window.matchMedia("(prefers-color-scheme: dark)").matches
+      ) {
+        document.body.setAttribute("data-theme", "dark");
+      }
+    </script>
   </body>
 </html>
