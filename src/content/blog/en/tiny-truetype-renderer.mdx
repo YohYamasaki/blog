@@ -1,22 +1,26 @@
 ---
-title: "Tutorial: Writing a tiny TrueType parser and renderer from scratch"
+title: "Writing a tiny TrueType parser and renderer from scratch"
 description: "Let's write a small TrueType parser and renderer to understand how fonts are rendered."
 pubDate: 2025-10-18
 updateDate: 2025-10-18
 tags: ["Font", "2D"]
 ---
 
-Here are two questions. Can you explain how the very text you're reading right now is being rendered? I couldn't. So what's the most efficient way to understand how something works? That's right—by building it yourself! So let's build a font parser and renderer from scratch.
+Here are two questions. Can you explain how the very text you're reading right now is being rendered? I couldn't. So what's the most efficient way to understand how something works? Right — by building it yourself! So let's build a font parser and renderer from scratch.
 
 ## Goal
 
-The objective is to build a tiny TrueType renderer gain an understanding of how fonts are rendered. Specifically, the goal is to load a Unicode font, render an arbitrary string, and output it as a PNG file. The implementation is mostly bare C++, utilising glm for vector operations and stb_image_write for PNG output. The complete code can be viewed below.
+The objective is to build a tiny TrueType renderer and gain an understanding of how fonts are rendered. Specifically, the goal is to load a Unicode font, render an arbitrary string, and output it as a PNG file. The implementation is mostly bare C++, utilising glm for vector operations and stb_image_write for PNG output. The complete code can be viewed below.
 
-https://github.com/YohYamasaki/tiny-truetype-renderer/tree/efbff3336c7941c02501917faf78635114cee24d
+https://github.com/YohYamasaki/tiny-truetype-renderer
+
+You can find the Japanese version of this article from below.
+
+https://zenn.dev/yayo1/articles/4fb4dd2a6c4654
 
 ## What is TrueType?
 
-TrueType is a font format developed by Apple in the late 1980s. Apple licensed the technology to Microsoft free of charge and has been used as one of the standard font formats to this day. The TrueType specification document can be viewed on Apple's official website.
+TrueType is a font format developed by Apple in the late 1980s. Apple licensed the technology to Microsoft free of charge, and it has been used as one of the standard font formats to this day. The TrueType specification document can be viewed on Apple's official website.
 
 https://developer.apple.com/fonts/TrueType-Reference-Manual/
 
@@ -46,7 +50,7 @@ The primary goal on the parser side is to obtain glyph data from Unicode. Howeve
 
 ### Reading .ttf files
 
-Let's create a FontParser class to open .ttf files and enable access to their data. Essentially, the parser involves repeatedly jumping to specific byte offsets and reading a set number of bytes at a time. Therefore, it is better to prepare navigation methods at this moment. One small note here is that TrueType data is big-endian.
+Let's create a FontParser class to open .ttf files and enable access to their data. Essentially, the parser involves repeatedly jumping to specific byte offsets and reading a set number of bytes at a time. Therefore, it is better to prepare navigation methods at this moment. One small note: TrueType data is in big-endian byte order.
 Incidentally, TrueType contains special data types beyond the usual ones like uint and int. F2Dot14 is a particularly important type used for transforming glyphs requiring precision, so let's create a method for it as well.
 
 https://developer.apple.com/fonts/TrueType-Reference-Manual/RM06/Chap6.html
@@ -236,7 +240,7 @@ https://developer.apple.com/fonts/TrueType-Reference-Manual/RM06/Chap6maxp.html
 ### hhea, hmtx tables
 Readers who have followed this far may not be surprised to learn that some glyph information required for rendering is scattered beyond the glyf table. Particularly crucial is the metric data needed for the horizontal layout of glyphs. The hhea table contains size-related data for the entire font, while the hmtx table holds such data for each individual glyph. If one were merely arranging glyphs horizontally for image output, knowing the font's maximum height and each glyph's width would suffice. The height is found in the `ascent` and `descent` fields of the hhea table, while the width of each glyph is stored in the hmtx table.
 
-The hmtx table contains information for each glyph ID within an array, but the array length must be obtained from the NumberOfMetrics field in the hhea table. This is because, for monospace fonts, information for each glyph is not required; sometimes only one is provided, or none at all. The advanceWidth contained within longHorMetric represents the total width of the glyph and the value indicating how far it shifts left within the leftSideBearing width. I couldn't quite grasp the leftSideBearing[] in the htmx table, so I'll ignore that for now.
+The hmtx table contains information for each glyph ID within an array, but the array length must be obtained from the NumberOfMetrics field in the hhea table. This is because, for monospace fonts, information for each glyph is not required; sometimes only one is provided, or none at all. The advanceWidth contained within longHorMetric represents the total width of the glyph and the value indicating how far it shifts left within the leftSideBearing width. I couldn't quite grasp the leftSideBearing[] in the hmtx table, so I'll ignore that for now.
 
 **Parser for glyph metrics (FontParser.cpp)**
 ```cpp
