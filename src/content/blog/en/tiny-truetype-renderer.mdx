@@ -1,9 +1,1637 @@
 ---
-title: Writing a tiny TrueType parser and renderer from scratch
-description: "Writing by yourself is the best way to understand how something works. Let's write a small TrueType parser and renderer to understand how fonts are rendered."
-pubDate: 2025-10-15
-updateDate: 2025-10-15
-tags: ["font", "2D"]
+title: "Tutorial: Writing a tiny TrueType parser and renderer from scratch"
+description: "Let's write a small TrueType parser and renderer to understand how fonts are rendered."
+pubDate: 2025-10-18
+updateDate: 2025-10-18
+tags: ["Font", "2D"]
 ---
 
-WIP!
+Here are two questions. Can you explain how the very text you're reading right now is being rendered? I couldn't. So what's the most efficient way to understand how something works? That's right—by building it yourself! So let's build a font parser and renderer from scratch.
+
+## Goal
+
+The objective is to build a tiny TrueType renderer gain an understanding of how fonts are rendered. Specifically, the goal is to load a Unicode font, render an arbitrary string, and output it as a PNG file. The implementation is mostly bare C++, utilising glm for vector operations and stb_image_write for PNG output. The complete code can be viewed below.
+
+https://github.com/YohYamasaki/tiny-truetype-renderer/tree/efbff3336c7941c02501917faf78635114cee24d
+
+## What is TrueType?
+
+TrueType is a font format developed by Apple in the late 1980s. Apple licensed the technology to Microsoft free of charge and has been used as one of the standard font formats to this day. The TrueType specification document can be viewed on Apple's official website.
+
+https://developer.apple.com/fonts/TrueType-Reference-Manual/
+
+### A Very Rough Outline of TrueType Mechanisms
+
+TrueType is a font format that achieves scalable rendering by employing vector graphics for glyphs. In other words, its smallest components are points; by connecting points to form lines, joining lines to create contours, and filling these contours, glyphs can be rendered.
+
+In TrueType, lines are categorised into two types: straight lines and curves, with curves represented using quadratic Bézier curves. Connecting lines forms a contour. While the term “glyph contour” may be difficult to visualise, consider the letter “B” below: it consists of one outer contour and two inner contours, totalling three contours.
+
+!["B" with outline](/src/assets/images/blog/tiny-truetype-renderer/truetype-example.png)
+*From [Digitizing Letterform Designs - TrueType Reference Manual - Apple Developer](https://developer.apple.com/fonts/TrueType-Reference-Manual/RM01/Chap1.html)*
+
+Furthermore, some glyphs can be expressed by combining multiple glyphs. These are called compound glyphs. For example, ‘Ü’ is a compound glyph using ‘U’. Once all the necessary outlines for a single glyph have been obtained in this manner, it is filled in to complete the rendering.
+
+TrueType data is represented in tables. Though termed tables, the data is packed directly into byte sequences, making them essentially one-dimensional. For instance, accessing a cmap table involves moving XXXX bytes from the file's start using the provided offset.
+
+![TrueType table structure](/src/assets/images/blog/tiny-truetype-renderer/truetype-structure.png)
+*This diagram is merely illustrative; the arrangement of tables and byte counts are arbitrary.*
+
+Have you begun to grasp the "contours" of TrueType? If so, several questions may spring to mind. How to access the glyph data? How are curves rendered? What about fill methods? And so on... Here, it suffices to gain that sense before diving into implementation. Now then, let us proceed to actually parse the TrueType file!
+
+## TrueType Parser: Preparing to Retrieve Glyph Data
+
+The primary goal on the parser side is to obtain glyph data from Unicode. However, this is not straightforward; it requires traversing numerous tangled tables to gather the information needed for the glyph. The diagram below shows the flow of tables accessed before obtaining the glyph data.
+
+![truetype-table-relations](/src/assets/images/blog/tiny-truetype-renderer/truetype-table-relations.png)
+
+### Reading .ttf files
+
+Let's create a FontParser class to open .ttf files and enable access to their data. Essentially, the parser involves repeatedly jumping to specific byte offsets and reading a set number of bytes at a time. Therefore, it is better to prepare navigation methods at this moment. One small note here is that TrueType data is big-endian.
+Incidentally, TrueType contains special data types beyond the usual ones like uint and int. F2Dot14 is a particularly important type used for transforming glyphs requiring precision, so let's create a method for it as well.
+
+https://developer.apple.com/fonts/TrueType-Reference-Manual/RM06/Chap6.html
+
+
+**Byte readers (FontParser.cpp)**
+```cpp
+FontParser::FontParser(const std::string& path) {
+  ifs.open(path, std::ios::binary);
+  if (!ifs) std::cerr << "failed to open file\n";
+}
+
+void FontParser::skipBytes(const unsigned bytes) {
+  ifs.seekg(bytes, std::ios::cur);
+}
+
+void FontParser::jumpTo(const unsigned byteOffset) {
+  ifs.seekg(byteOffset, std::ios::beg);
+}
+
+template <typename T>
+T FontParser::readBeOrThrow() {
+  uint32_t acc = 0;
+  for (std::size_t i = 0; i < sizeof(T); ++i) {
+    const int c = ifs.get();
+    if (c == EOF) throw std::runtime_error("unexpected EOF");
+    acc = (acc << 8) | static_cast<unsigned char>(c);
+  }
+
+  if constexpr (std::is_signed_v<T>) {
+    const auto bits = static_cast<unsigned>(sizeof(T) * 8);
+    const uint32_t sign_mask = (static_cast<uint32_t>(1) << (bits - 1));
+    if (acc & sign_mask) {
+      const uint64_t two_pow = static_cast<uint64_t>(1) << bits;
+      const int64_t signed_val =
+          static_cast<int64_t>(acc) - static_cast<int64_t>(two_pow);
+      return static_cast<T>(signed_val);
+    }
+    return static_cast<T>(acc);
+  } else {
+    return static_cast<T>(acc);
+  }
+}
+uint8_t FontParser::readUint8() { return readBeOrThrow<uint8_t>(); }
+uint16_t FontParser::readUint16() { return readBeOrThrow<uint16_t>(); }
+uint32_t FontParser::readUint32() { return readBeOrThrow<uint32_t>(); }
+int8_t FontParser::readInt8() { return readBeOrThrow<int8_t>(); }
+int16_t FontParser::readInt16() { return readBeOrThrow<int16_t>(); }
+int32_t FontParser::readInt32() { return readBeOrThrow<int32_t>(); }
+float FontParser::readF2Dot14() {
+  const auto raw = readBeOrThrow<int16_t>();
+  return static_cast<float>(raw) / static_cast<float>(1 << 14);
+}
+```
+
+### Offset table
+
+Upon loading the file, the table directory appears first. This contains the information required to access the tables packed within the TrueType file. Data for loading the table directory is arranged in the offset table, followed by the table directory itself, which continues for the number of tables specified by numTables after the final byte of the offset table.
+
+
+https://developer.apple.com/fonts/TrueType-Reference-Manual/RM06/Chap6.html
+
+
+This is the structure of the table directory. It stores the offsets for jumping to each table. Since we will be jumping to each table multiple times to get glyph data, let's store it in the parser's field as a hash map.
+
+
+**Parser for table directory (FontParser.cpp)**
+```cpp
+FontParser::FontParser(const std::string& path) {
+  ifs.open(path, std::ios::binary);
+  if (!ifs) std::cerr << "failed to open file\n";
+
+  // read header
+  skipBytes(sizeof(uint32_t)); // skip scaler type
+  const uint16_t numTables = readUint16();
+  // skip searchRange, entrySelector, rangeShift
+  skipBytes(sizeof(uint16_t) * 3);
+
+  // read table directory
+  for (int i = 0; i < numTables; ++i) {
+    constexpr unsigned bytesLength = 4;
+    char bytes[bytesLength + 1];
+    ifs.read(bytes, bytesLength);
+    bytes[bytesLength] = '\0';
+    const auto tag = std::string(bytes);
+    const auto checkSum = readUint32();
+    const auto offset = readUint32();
+    const auto length = readUint32();
+    directory[tag] = {checkSum, offset, length};
+  }
+}
+```
+
+### cmap table
+
+Having gained access to the tables, we shall first examine the cmap table. While glyphs reside in the glyf table, we can access the glyf table itself but still lack a way to access individual glyphs. So, we need to convert in the following order: character code -> GlyphCode(GlyphIndex) -> GlyphOffset. (The specification uses GlyphCode and GlyphIndex interchangeably, we shall henceforth use GlyphCode consistently.) The cmap table stores the first conversion: the mapping from character code to GlyphCode.
+
+The cmap is divided into an index table, sub-tables, and mapping tables. Each subtable has a different structure depending on its purpose, such as for Unicode or Windows. As this implementation only supports Unicode, examining which subtables are used reveals there are two: format12 and format4. It appears that most modern Unicode fonts use format12. So for this project, we will only support format12.
+
+In the implementation, simply loop through the numberSubtables count and read the Unicode -> GlyphCode mappings from the grouping. The grouping structure is unique; rather than a simple one-to-one mapping, only the first and last Unicode values and the first GlyphCode are provided for each group. Within this Unicode range, the corresponding GlyphCodes are listed sequentially. It would be easier to understand if you could see the implementation. As before, storing this as a hash map is convenient.
+
+**Unicode→GlyphCode mapping (FontParser.cpp)**
+```cpp
+void FontParser::loadUnicodeToGlyphCodeMap() {
+  const auto cmapOffset = directory["cmap"].offset;
+  jumpTo(cmapOffset);
+  skipBytes(2); // skip version
+  const uint16_t numSubtables = readUint16();
+
+  u_int32_t subtableOffset = -1;
+  for (int i = 0; i < numSubtables; ++i) {
+    const auto platform = readUint16();
+    const auto encoding = readUint16();
+    const auto offset = readUint32();
+    // Only supports Unicode with format12 for now
+    // Ideally format4 should be supported for a fallback
+    if (platform == 0 && encoding == 4) subtableOffset = offset;
+  }
+
+  if (subtableOffset == -1) {
+    throw std::runtime_error("Not supported format");
+  }
+  jumpTo(cmapOffset + subtableOffset);
+
+  // read subtable header to detect format
+  const uint16_t format = readUint16();
+  if (format == 12) {
+    skipBytes(10); // skip reserved, length, language
+    const uint32_t nGroups = readUint32();
+
+    for (int i = 0; i < nGroups; ++i) {
+      const auto startCharCode = readUint32();
+      const auto endCharCode = readUint32();
+      const auto startGlyphCode = readUint32();
+      unicodeToGlyphCode[startCharCode] = startGlyphCode;
+      const auto diff = (endCharCode - startCharCode);
+      for (int j = 1; j <= diff; ++j) {
+        unicodeToGlyphCode[startCharCode + j] = startGlyphCode + j;
+      }
+    }
+  } else {
+    throw std::runtime_error("Not supported format");
+  }
+}
+```
+
+https://developer.apple.com/fonts/TrueType-Reference-Manual/RM06/Chap6cmap.html
+
+### loca table
+
+Once you have obtained the GlyphCode, you can access the glyph by obtaining the corresponding byte offset. This mapping is stored in the loca table. Fortunately, this table is quite straightforward, with glyph offsets simply listed in the order of their GlyphCodes. Unfortunately, however, the total number of glyphs required before reading the loca table is stored in the `numGlyphs` field in the maxp table, while the offset unit is located in the `indexToLocFormat` field in the head table. Suppressing the urge to ask ‘Why on earth...’, let's proceed to read it. In implementation, it would be better to also use a hash map for the loca table.
+
+Additionally, a minor point is that for GlyphCodes without a glyph, the offset will be the same value as the next glyph. I wondered what a GlyphCode without a glyph could be, but it seems spaces and such fall into this category. Aha! If this check isn't enabled, for example in Noto Sans JP, the space character ‘　’ would be incorrectly mapped to the offset of the comma ‘、’ instead.
+
+**GlyphCode→GlyphOffset mapping (FontParser.cpp)**
+```cpp
+void FontParser::loadGlyphOffsetsMap() {
+  jumpTo(directory["maxp"].offset + 4);
+  const int numGlyphs = readUint16();
+
+  jumpTo(directory["head"].offset);
+  skipBytes(50); // skip until indexToLocFormat
+  const auto isTwoByte = readInt16() == 0;
+  const auto glyphTableOffset = directory["glyf"].offset;
+  const auto locationTableOffset = directory["loca"].offset;
+
+  jumpTo(locationTableOffset);
+  for (int i = 0; i < numGlyphs; ++i) {
+    const auto glyphOffset = isTwoByte ? readUint16() * 2u : readUint32();
+    glyphCodeToOffset[i] = glyphTableOffset + glyphOffset;
+  }
+  // Remove offset for empty glyphs
+  for (int i = 1; i < numGlyphs; ++i) {
+    if (glyphCodeToOffset[i] == glyphCodeToOffset[i - 1]) {
+      glyphCodeToOffset[i - 1] = 0;
+    }
+  }
+}
+```
+
+https://developer.apple.com/fonts/TrueType-Reference-Manual/RM06/Chap6loca.html
+
+https://developer.apple.com/fonts/TrueType-Reference-Manual/RM06/Chap6head.html
+
+https://developer.apple.com/fonts/TrueType-Reference-Manual/RM06/Chap6maxp.html
+
+### hhea, hmtx tables
+Readers who have followed this far may not be surprised to learn that some glyph information required for rendering is scattered beyond the glyf table. Particularly crucial is the metric data needed for the horizontal layout of glyphs. The hhea table contains size-related data for the entire font, while the hmtx table holds such data for each individual glyph. If one were merely arranging glyphs horizontally for image output, knowing the font's maximum height and each glyph's width would suffice. The height is found in the `ascent` and `descent` fields of the hhea table, while the width of each glyph is stored in the hmtx table.
+
+The hmtx table contains information for each glyph ID within an array, but the array length must be obtained from the NumberOfMetrics field in the hhea table. This is because, for monospace fonts, information for each glyph is not required; sometimes only one is provided, or none at all. The advanceWidth contained within longHorMetric represents the total width of the glyph and the value indicating how far it shifts left within the leftSideBearing width. I couldn't quite grasp the leftSideBearing[] in the htmx table, so I'll ignore that for now.
+
+**Parser for glyph metrics (FontParser.cpp)**
+```cpp
+FontMetric FontParser::getFontMetric() {
+  jumpTo(directory["hhea"].offset);
+  skipBytes(4);
+  const auto ascent = readInt16();
+  const auto descent = readInt16();
+  return FontMetric{ascent, descent};
+}
+
+
+void FontParser::loadGlyphMetricsMap() {
+  jumpTo(directory["hhea"].offset);
+  skipBytes(34); // Skip to numOfLongHorMetrics
+  const u_int16_t numOfMetrics = readUint16();
+  jumpTo(directory["hmtx"].offset);
+  for (int i = 0; i < numOfMetrics; ++i) {
+    const u_int16_t width = readUint16();
+    const int16_t lsb = readInt16();
+    glyphMetric[i] = Metric{width, lsb};
+  }
+}
+```
+
+https://developer.apple.com/fonts/TrueType-Reference-Manual/RM06/Chap6hhea.html
+
+https://developer.apple.com/fonts/TrueType-Reference-Manual/RM06/Chap6hmtx.html
+
+So finally, we are now ready to load the glyph data!
+
+## Preparation of a renderer
+
+Simply being able to render glyphs, however basic, is incredibly motivating. So before we start parsing glyph data, let's build a simple 2D renderer. Initially, it'll suffice if we can draw points, lines, and squares anywhere we like.
+
+For simplicity, we shall create a FrameBufferCanvas class combining the frame buffer and rendering method. The frame buffer shall be a one-dimensional array holding per-pixel RGB information.
+First, we create the rendering methods. For point rendering, update the target pixel with the new RGB value. For lines and squares, simply draw points continuously along the given segment. Passing individual x and y coordinates for each point becomes cumbersome later, so it's useful to also prepare an overload that accepts a vector. Finally, to convert the rendering result into an image, we create a method using stb_image_writer to output to PNG.
+
+The line drawing algorithm was borrowed from [Bresenham’s line drawing - Playing with code](https://haqr.eu/tinyrenderer/bresenham/). This is a tutorial for building your own 3D renderer, it is highly recommended.
+
+**Very initial impl. of FrameBufferCanvas.cpp**
+```cpp
+struct RGB {
+  unsigned r, g, b;
+  RGB() = default;
+
+  constexpr RGB(const unsigned r_, const unsigned g_,
+                const unsigned b_) : r(r_), g(g_), b(b_) {
+  }
+
+  constexpr explicit RGB(const unsigned greyscale) : r(greyscale),
+    g(greyscale), b(greyscale) {
+  }
+
+  bool operator==(const RGB& a) const {
+    return r == a.r && g == a.g && b == a.b;
+  }
+};
+
+FrameBufferCanvas::FrameBufferCanvas(const int width_,
+                                     const int height_) :
+  width(width_), height(height_) {
+  framebuffer = std::make_unique<RGB[]>(width * height);
+  for (int i = 0; i < width * height; ++i) framebuffer[i] = BLACK;
+}
+
+void FrameBufferCanvas::set(const int x,
+                            const int y,
+                            const RGB color) {
+  if (x < 0 || y < 0) return;
+  if (x >= width || y >= height) return;
+  const std::size_t i = static_cast<std::size_t>(y) * static_cast<std::size_t>(
+                          width) + static_cast<std::size_t>(x);
+  framebuffer[i] = color;
+}
+
+void FrameBufferCanvas::drawLine(int ax, int ay, int bx, int by,
+                                 const int thickness,
+                                 const RGB color) {
+  const int w = std::abs(ax - bx);
+  const int h = std::abs(ay - by);
+  const bool isSteep = w < h;
+  if (isSteep) {
+    std::swap(ax, ay);
+    std::swap(bx, by);
+  }
+  if (ax > bx) {
+    std::swap(ax, bx);
+    std::swap(ay, by);
+  }
+  auto y = static_cast<float>(ay);
+  for (int x = ax; x <= bx; ++x) {
+    if (isSteep) {
+      drawRect(static_cast<int>(y), x, thickness, thickness, color);
+    } else {
+      drawRect(x, static_cast<int>(y), thickness, thickness, color);
+    }
+    y += static_cast<float>(by - ay) / static_cast<float>(bx - ax);
+  }
+}
+
+void FrameBufferCanvas::drawRect(const int centerX,
+                                 const int centerY,
+                                 const int rectWidth,
+                                 const int rectHeight,
+                                 const RGB color) {
+  // compute integer bounds
+  const int halfW = rectWidth / 2;
+  const int halfH = rectHeight / 2;
+  int left = centerX - halfW;
+  int top = centerY - halfH;
+  int right = left + rectWidth;
+  int bottom = top + rectHeight;
+
+  // clip to framebuffer
+  if (right <= 0 || bottom <= 0) return;
+  if (left >= width || top >= height) return;
+
+  left = std::max(left, 0);
+  top = std::max(top, 0);
+  right = std::min(right, width);
+  bottom = std::min(bottom, height);
+
+  for (int y = top; y < bottom; ++y) {
+    for (int x = left; x < right; ++x) {
+      set(x, y, color);
+    }
+  }
+}
+
+void FrameBufferCanvas::writePngFile(const char* fileName) const {
+  stbi_write_png(fileName, width, height, 3, framebuffer.get(), 0);
+}
+```
+
+**main.cpp**
+```cpp
+int main() {
+  FrameBufferCanvas canvas{500, 500};
+  canvas.drawLine(100, 100, 300, 400, 5, {255, 255, 255});
+  canvas.drawLine(400, 200, 50, 300, 2, {200, 0, 0});
+  canvas.drawRect(200, 400, 50, 50, {0, 200, 0});
+  canvas.writePngFile("out.png");
+}
+```
+
+We are now ready to draw glyphs.
+
+![Output of simple geometries](/src/assets/images/blog/tiny-truetype-renderer/simple-geometries-output.png)
+
+## Glyph Parsing & Outline Rendering
+
+Right then, let's proceed with the main task of the parser, glyph parsing. Glyph information is stored in the glyf table. There are two types of glyphs: Simple glyphs and Compound glyphs. Since Compound glyphs contain multiple glyphs, let's set our initial goal to load Simple glyphs.
+
+https://developer.apple.com/fonts/TrueType-Reference-Manual/RM06/Chap6glyf.html
+
+### Parsing glyf tables
+
+Like other tables, the glyph table is also divided into two sections: the header and the body. The key piece of information in the header is the numberOfContours. If this value is positive, it indicates a Simple glyph; if negative, Compound glyph.
+
+### Simple glyph
+
+The information required for rendering glyphs has emerged! Note that the number of elements in the endPtsOfContours is the number of contours, while the other arrays, like flags, correspond to the number of vertices. The number of vertices is not explicitly stated, but taking the maximum value of endPtsOfContours will suffice. The instructions will be ignored in this implementation.
+
+Flags are a bit tricky. Some flags cause the behaviour of other flags to branch. Specifically, the behaviour of bits 1, 2, 4, and 5 is as follows:
+
+- If 3 is set, the same flag is repeated for the number of times stored in the immediately following 16 bits.
+- 1, 2 and 4, 5 are flags for obtaining the coordinates of x and y respectively.
+- If 1 and 2 are set, the corresponding coordinate length is 1 byte (unsigned); otherwise, it is 2 bytes (signed).
+- When 1 and 2 are set, 4 and 5 become the sign.
+- If 1 and 2 are not set, and 4 and 5 are set, it is the same as the previous coordinate position.
+- If 1 and 2 are not set, and 4 and 5 are also not set, then 2 bytes (signed int) represent the coordinate position.
+
+On Curve contains the information required to render Bézier curves. This will be explained later in the section on curve rendering.
+
+Implementation. There are two types of glyphs, but by structuring Glyph object to hold zero or more GlyphComponents, both types can utilise the same structure. Therefore, in the implementation, a Simple glyph becomes a Glyph holding either zero or one GlyphComponent. Regarding getGlyphComponent, it receives an affineMat, but as this is for Component Glyphs, so passing an identity matrix is sufficient for Simple glyphs.
+
+**Glyph.h**
+```cpp
+struct Metric {
+  uint16_t advanceWidth;
+  int16_t leftSideBearing;
+};
+
+class Glyph {
+public:
+  Glyph() = default;
+  explicit Glyph(std::vector<GlyphComponent> components_, Metric metric_);
+  [[nodiscard]] const std::vector<GlyphComponent>& getComponents() const;
+  [[nodiscard]] const Metric& getMetric() const;
+  static Glyph EmptyGlyph(Metric metric_);
+
+private:
+  std::vector<GlyphComponent> components;
+  Metric metric;
+};
+```
+
+**GlyphComponent.h**
+```cpp
+class GlyphComponent {
+public:
+  GlyphComponent() : numOfVertices(0) {
+  }
+
+  explicit GlyphComponent(uint16_t numOfVertices_,
+                          std::unordered_set<uint16_t> endPtsOfContours_,
+                          std::unordered_set<uint16_t> ptsOnCurve_,
+                          BoundingRect boundingRect_,
+                          std::vector<glm::vec2> coordinates_);
+  [[nodiscard]] uint16_t getNumOfVertices() const;
+  [[nodiscard]] BoundingRect getBoundingRect() const;
+  [[nodiscard]] const std::unordered_set<uint16_t>& getEndPtsOfContours() const;
+  [[nodiscard]] const std::unordered_set<uint16_t>& getPtsOnCurve() const;
+  [[nodiscard]] const std::vector<glm::vec2>& getCoordinates() const;
+
+private:
+  uint16_t numOfVertices;
+  std::unordered_set<uint16_t> endPtsOfContours;
+  BoundingRect boundingRect;
+  std::vector<glm::vec2> coordinates;
+  std::unordered_set<uint16_t> ptsOnCurve;
+};
+```
+
+**Parser for simple glyphs (FontParser.cpp)**
+```cpp
+Glyph FontParser::getGlyph(const uint32_t cp) {
+  if (!unicodeToGlyphCode.contains(cp)) {
+    throw std::runtime_error("Glyph not found");
+  }
+  return getGlyphByCode(unicodeToGlyphCode[cp]);
+}
+
+Glyph FontParser::getGlyphByCode(const uint16_t glyphCode) {
+  const auto [numOfContours, boundingRect] = readGlyphHeader(glyphCode);
+  Glyph glyph;
+  const auto metric = glyphMetric[glyphCode];
+  if (numOfContours == 0) {
+    // No glyph needed i.e. space
+    glyph = Glyph::EmptyGlyph(metric);
+  } else if (numOfContours > 0) {  // Read simple glyphs
+    glyph = Glyph({getGlyphComponent(numOfContours, boundingRect)},
+                  metric);
+  } else {
+    glyph = getCompoundGlyph(); // Not implemented yet!
+  }
+  return glyph;
+}
+
+GlyphHeader FontParser::readGlyphHeader(const uint16_t glyphCode) {
+  const auto offset = glyphCodeToOffset[glyphCode];
+  if (offset == 0) {
+    return GlyphHeader{0, BoundingRect{0, 0, 0, 0}};
+  }
+
+  jumpTo(offset);
+  // Read glyph description
+  const auto numOfContours = readInt16(); // number of contours
+  BoundingRect boundingRect;
+  boundingRect.xMin = readInt16();
+  boundingRect.yMin = readInt16();
+  boundingRect.xMax = readInt16();
+  boundingRect.yMax = readInt16();
+
+  return GlyphHeader{numOfContours, boundingRect};
+}
+
+GlyphComponent FontParser::getGlyphComponent(
+    const int16_t numOfContours,
+    const BoundingRect boundingRect,
+    const glm::mat3& affineMat) {
+  std::unordered_set<uint16_t> endPtsOfContours;
+
+  uint16_t numOfVertices = 1;
+  for (int i = 0; i < numOfContours; ++i) {
+    const auto point = readUint16();
+    numOfVertices = std::max(numOfVertices, static_cast<uint16_t>(point + 1));
+    endPtsOfContours.insert(point);
+  }
+  // Skip instructions
+  skipBytes(readUint16());
+
+  std::vector<uint8_t> allFlags(numOfVertices, 0);
+  std::unordered_set<uint16_t> ptsOnCurve;
+  uint16_t idx = 0;
+  while (idx < numOfVertices) {
+    const uint8_t f = readUint8();
+    allFlags[idx] = f;
+    //ON_CURVE_POINT
+    if (isFlagSet(f, 0)) ptsOnCurve.insert(idx);
+    if (isFlagSet(f, 3)) {
+      // REPEAT_FLAG
+      const uint8_t repeat = readUint8();
+      // fill repeats
+      for (uint16_t r = 1; r <= repeat; ++r) allFlags[idx + r] = f;
+      idx += static_cast<uint16_t>(repeat) + 1;
+    } else {
+      ++idx;
+    }
+  }
+
+  const std::vector<int> xCoordinates = getGlyphCoordinates(
+      numOfVertices, allFlags, true);
+  const std::vector<int> yCoordinates = getGlyphCoordinates(
+      numOfVertices, allFlags, false);
+  std::vector<glm::vec2> coordinates;
+  for (int i = 0; i < numOfVertices; ++i) {
+    const auto coord = affineMat * glm::vec3(xCoordinates[i], yCoordinates[i],
+                                             1);
+    coordinates.emplace_back(coord.x, coord.y);
+  }
+
+  return GlyphComponent{numOfVertices, endPtsOfContours, ptsOnCurve,
+                        boundingRect, coordinates};
+}
+
+std::vector<int> FontParser::getGlyphCoordinates(const uint16_t& n,
+                                                 const std::vector<uint8_t>&
+                                                 flags,
+                                                 const bool isX) {
+  std::vector coordinates(n, 0);
+  for (int i = 0; i < n; ++i) {
+    const auto f = flags[i];
+    const auto isShort = isFlagSet(f, isX ? 1 : 2);
+    int pos = coordinates[i == 0 ? 0 : i - 1];
+
+    if (isShort) {
+      const auto isPositive = isFlagSet(f, isX ? 4 : 5);
+      const auto offset = isPositive
+                            ? readUint8()
+                            : -1 * static_cast<int>(readUint8());
+      pos += offset;
+    } else {
+      if (!isFlagSet(f, isX ? 4 : 5)) {
+        pos += readInt16();
+      };
+    }
+
+    coordinates[i] = pos;
+  }
+  return coordinates;
+}
+```
+
+### Render outlines as straight lines
+
+Now let's connect the x and y coordinates obtained by parsing the glyph with a straight line. The glyph coordinates are in a Cartesian coordinate system, but the framebuffer uses an image coordinate system where the top-left corner is the origin, so a coordinate transformation is required. For now, let's simply flip the output image upside down. We'll handle the proper coordinate transformation later.
+
+**Glyph outline rendering with straight lines (FrameBufferCanvas.cpp)**
+```cpp
+void FrameBufferCanvas::renderGlyphOutline(const unsigned int startX,
+                                    const unsigned int startY,
+                                    const Glyph& glyph,
+                                    const RGB color) {
+  for (const auto& c : glyph.getComponents()) {
+    uint16_t contourStartPt = 0;
+    const auto n = c.getNumOfVertices();
+    const auto coordinates = c.getCoordinates();
+    const auto endPtsOfContours = c.getEndPtsOfContours();
+
+    for (int i = 0; i < n; ++i) {
+      const auto isEndPt = endPtsOfContours.contains(i);
+      const auto nextIdx = isEndPt ? contourStartPt : (i + 1) % n;
+      const auto x = coordinates[i].x + startX;
+      const auto y = coordinates[i].y + startY;
+      const auto nextX = coordinates[nextIdx].x + startX;
+      const auto nextY = coordinates[nextIdx].y + startY;
+      drawLine(x, y, nextX, nextY, 5, color);
+      drawRect(x, y, 20, 20, color);
+      if (isEndPt) contourStartPt = i + 1;
+    }
+  }
+    stbi_flip_vertically_on_write(1);
+}
+```
+
+**main.cpp**
+```cpp
+int main() {
+  FontParser parser("fonts/JetBrainsMono-Bold.ttf");
+  FrameBufferCanvas canvas{1200, 1200};
+  const auto cps = utf8ToCodepoints("a");
+  const Glyph glyph = parser.getGlyph(cps[0]);
+  canvas.renderGlyphOutline(300, 300, glyph, RGB{255});
+  canvas.writePngFile("out.png");
+}
+```
+
+The outline has been rendered! It's still a bit blocky, but don't you think it's quite impressive even at this stage?
+
+![Glyph "a" rendered by straight lines](/src/assets/images/blog/tiny-truetype-renderer/simple-glyph-a.png)
+
+### Compound glyph
+
+If you have successfully loaded the Simple glyph data, you are now ready to handle Compound glyphs. The concept of Compound glyphs is quite straightforward: if parts of glyphs share the same shape, such as ‘o’ and ‘ö’, or “i” and ‘j’, those parts can be shared. However, to combine glyphs, you must specify the position, size, and transformation method for each element within the resulting glyph. Failure to apply that transformation leads to outcomes such as the following.
+
+![Miscomposed glyph "j"](/src/assets/images/blog/tiny-truetype-renderer/compound-glyph-no-transform-j.png)
+*This should be "j"*
+
+Right then, let's proceed to parse the compound glyph data. This is the trickiest part of the parser, but if you follow it step by step, you should be able to understand it!
+
+The header section of a Glyph is common to Simple glyphs; when numberOfContours is negative, the body section corresponds to a Compound glyph. The compound glyph itself does not contain glyph coordinate information; it has a nested structure containing multiple component glyphs within the compound. These components can be either simple glyphs or compound glyphs. However, since only simple glyphs possess concrete coordinate information, the process ultimately resolves to simple glyphs. Therefore, it is necessary to extract multiple components, transform them, and then combine them.
+
+Fundamentally, we construct an expression to transform the Component. The nature of this expression varies depending on flags. While there are as many as ten such flags, this article will disregard four of them: ARGS_ARE_XY_VALUES, ROUND_XY_TO_GRID, WE_HAVE_INSTRUCTIONS, and OVERLAP_COMPOUND.
+The crucial information here is how to transform and move this Component. The specification document contains the following formula:
+
+$$
+\begin{aligned}
+x' &= m\left( \frac{a}{m}x + \frac{c}{m}y + e \right) \\
+y' &= n\left( \frac{b}{n}x + \frac{d}{n}y + f \right)
+\end{aligned}
+$$
+
+a, b, c, and d are defined by flags as Table 19a in the glyf table spec suggests. Note that a, b, c, and d are of type F2Dot14.
+
+Assuming ARGS_ARE_XY_VALUES is always on, variables 1 and 2 will be inserted directly into e and f. Then, the matrix is determined by the flags WE_HAVE_A_SCALE, WE_HAVE_AN_X_AND_Y_SCALE, WE_HAVE_A_TWO_BY_TWO, along with the variables mentioned earlier and several additional values read in. These flags are mutually exclusive; multiple cannot be set simultaneously. Examining the table 19a reveals that the following transformations occur according to each flag:
+
+- WE_HAVE_A_SCALE: Use same scale for both x and y
+- WE_HAVE_AN_X_AND_Y_SCALE scale: x and y have different scales
+- WE_HAVE_A_TWO_BY_TWO: The matrix for the linear transformation is provided in its entirety
+
+Finally m is defined by `m₀ = max(|a|, |b|), If |(|a|-|c|)| ≤ 33/65536, then m = 2m₀; otherwise, m = m₀`, and the same for n.
+
+We shall represent points and lines using vectors from now on. To simplify the transformation, let's construct the affine transformation matrix based on the extracted variables and the given equations.
+
+$$
+\begin{bmatrix}
+x' \\
+y' \\
+1
+\end{bmatrix}
+=
+\begin{bmatrix}
+a & c & m e \\
+b & d & n f \\
+0 & 0 & 1
+\end{bmatrix}
+\begin{bmatrix}
+x \\
+y \\
+1
+\end{bmatrix}
+$$
+
+Once the sequence is complete, pass it to the method that retrieves the GlyphComponent. Then extract the Component from the returned Glyph and combine them. The final glyph's Metric uses the Component where USE_MY_METRICS is enabled. Loop through this sequence as long as MORE_COMPONENTS is enabled, synthesising each time, until the final compound glyph is complete!
+
+Implementation. As compound glyphs are nested, using recursion should simplify matters.
+
+**Parser for compound glyphs (FontParser.cpp)**
+```cpp
+std::vector<GlyphComponent> FontParser::getCompoundSubComponents(
+    const uint16_t glyphCode,
+    const glm::mat3& affineMat) {
+  const auto [numOfContours, boundingRect] = readGlyphHeader(glyphCode);
+  std::vector<GlyphComponent> components;
+  if (numOfContours > 0) {
+    // Simple
+    components.emplace_back(
+        getGlyphComponent(numOfContours, boundingRect, affineMat));
+  } else {
+    // Compound: Compound glyph can have nested Compound glyphs
+    const auto subComponents = getCompoundGlyph().getComponents();
+    components.insert(components.begin(), subComponents.begin(),
+                      subComponents.end());
+  }
+  return components;
+}
+
+Glyph FontParser::getCompoundGlyph() {
+  std::vector<GlyphComponent> components;
+  uint16_t flags;
+  Metric metric{};
+  do {
+    flags = readUint16();
+    const uint16_t glyphCode = readUint16();
+    // read flags
+    const bool isWord = isFlagSet(flags, 0);
+    const bool isXyValue = isFlagSet(flags, 1); // not implemented
+    const bool roundXyGrid = isFlagSet(flags, 2); // not implemented
+    const bool hasScale = isFlagSet(flags, 3);
+    const bool hasXScale = isFlagSet(flags, 6);
+    const bool hasTwoByTwo = isFlagSet(flags, 7);
+    const bool hasInstruction = isFlagSet(flags, 8); // not implemented
+    const bool useMetrics = isFlagSet(flags, 9);
+    const bool overlap = isFlagSet(flags, 10); // not implemented
+
+    // read arguments (arg1,arg2) either words or bytes (signed)
+    int32_t arg1 = 0, arg2 = 0;
+    if (isWord) {
+      arg1 = readInt16();
+      arg2 = readInt16();
+    } else {
+      arg1 = static_cast<int32_t>(static_cast<unsigned char>(readInt8()));
+      arg2 = static_cast<int32_t>(static_cast<unsigned char>(readInt8()));
+    }
+    // interpret arg1/arg2 later: XY values
+    const int32_t e_raw = arg1;
+    const int32_t f_raw = arg2;
+
+    // read transform values only when indicated
+    double a = 1.0, b = 0.0, c = 0.0, d = 1.0;
+    if (hasScale) {
+      const double s = readF2Dot14();
+      a = d = s;
+      b = c = 0.0;
+    } else if (hasXScale) {
+      a = readF2Dot14();
+      d = readF2Dot14();
+      b = c = 0.0;
+    } else if (hasTwoByTwo) {
+      a = readF2Dot14();
+      b = readF2Dot14();
+      c = readF2Dot14();
+      d = readF2Dot14();
+    } // else identity
+
+    // Normalization factors    constexpr float eps = 33.0 / 65536.0;
+    float m = static_cast<float>(std::max(std::fabs(a), std::fabs(b)));
+    m = std::fabs(a) - std::fabs(c) <= eps ? 2 * m : m;
+    float n = static_cast<float>(std::max(std::fabs(c), std::fabs(d)));
+    n = std::fabs(b) - std::fabs(d) <= eps ? 2 * n : n;
+    const auto e = static_cast<float>(e_raw);
+    const auto f = static_cast<float>(f_raw);
+
+    // The affine transformation matrix, looks like this:
+    // [a, c, me]
+    // [b, d, nf]
+    // [0, 0,  1]
+    const auto affineMat = glm::mat3(a, b, 0, c, d, 0, m * e, n * f, 1);
+
+    // Needs to save the current reader pos since getGlyph jumps to a certain offset pos
+    const auto currentOffset = ifs.tellg();
+    const auto subComponents =
+        getCompoundSubComponents(glyphCode, affineMat);
+    if (subComponents.empty()) {
+      throw std::runtime_error(
+          "FontParser: Something went wrong with loading component glyphs");
+    }
+    components.insert(components.end(), subComponents.begin(),
+                      subComponents.end());
+
+    if (useMetrics) {
+      metric = glyphMetric[glyphCode];
+    }
+    // Reload the prev reader pos for the next loop
+    jumpTo(currentOffset);
+  } while (isFlagSet(flags, 5)); // MORE_COMPONENTS
+
+  return Glyph(components, metric);
+}
+```
+
+This completes the bare minimum TrueType parser!
+
+![Correctly compound glyph "j"](/src/assets/images/blog/tiny-truetype-renderer/compound-glyph-j.png)
+*"j" got its point back*
+
+## Renderer: Curve Rendering
+
+Let's improve the renderer. First, we'll want to draw curves.
+
+### Definition of Bézier Curves
+
+A Bézier curve is a smooth curve expressed mathematically, which is used in many vector graphics. You will likely encounter it in vector graphics editors. $P$ represents the coordinates of each control point, and $t$ is the parameter. The first and last $P$ points form the endpoints of the Bézier curve.
+
+$$
+B(t) = \sum_{i=0}^{n} \binom{n}{i} (1 - t)^{n - i} t^i P_i, \quad 0 \le t \le 1
+$$
+
+As mentioned earlier, TrueType curves are represented by quadratic Bézier curves. Therefore, expanding the above equation yields the following:
+
+$$
+B(t) = (1 - t)^2 P_0 + 2(1 - t)t P_1 + t^2 P_2, \quad 0 \le t \le 1
+$$
+
+If you have the time, I recommend reading the following online book.
+
+https://pomax.github.io/bezierinfo/index.html
+
+### De Casteljau's algorithm
+Here, Bézier curves possess the welcome property that their control points can be obtained by repeatedly subdividing them at $t: t-1$. In essence, this means that linear interpolation (=lerp) need only be repeated for the degree of the curve. This is known as De Casteljau's algorithm.
+
+![Animation of De Casteljau's algorithm](/src/assets/images/blog/tiny-truetype-renderer/Bezier_2_big.gif)
+
+When written out as code, it looks like this.
+
+**Lerp for a segment and a quadratic Bézier curve (Geometry.h)**
+```cpp
+inline glm::vec2 lerp(const glm::vec2& a, const glm::vec2& b, const float t) {
+  assert(t >= 0 && t <= 1);
+  return a + (b - a) * t;
+}
+
+inline glm::vec2
+bezierLerp(const glm::vec2& a, const glm::vec2& b, const glm::vec2& c,
+           const float t) {
+  assert(t >= 0 && t <= 1);
+  return lerp(lerp(a, b, t), lerp(b, c, t), t);
+}
+```
+
+### TrueType Bézier curves
+
+Do you recall that when we parsed glyphs, each point in a Simple Glyph had an `ON_CURVE_POINT` flag? This flag actually indicated whether the point was an endpoint of the curve. When the flag was on, the point was on the Bézier curve itself—that is, it was a endpoint. When off, it was a control point other than an endpoint.
+For the remainder of this section, we shall refer to the endpoints as $A$ and the other control points as $B$ for simplicity. Now that we understand the roles of $A$ and $B$, let's render the outline with $A$ in white and $B$ in green rects.
+
+![control-points-by-green](/src/assets/images/blog/tiny-truetype-renderer/control-points-by-green.png)
+
+Upon examining the rendering results, you may notice something amiss. There are instances where two or more $B$ points appear adjacent! Whilst this should not occur with quadratic Bézier curves, it arises because TrueType employs implicit endpoints. Specifically, quadratic Bézier curves are constructed through the following two patterns:
+
+- In the case of the sequence ‘$A$-$B$-$A$’, it simply forms a quadratic Bézier curve.
+-  For a sequence where $B$-$B$ follows, assume that $A$ lies at the midpoint between the two $B$ points and construct a quadratic Bézier curve.
+
+Taking this into account, when two $B$ elements are placed side by side, the implicit endpoints are output in blue as follows. (For clarity, the outlines of the curved sections have been hidden.)
+
+![show-implicit-on-curve](/src/assets/images/blog/tiny-truetype-renderer/show-implicit-on-curve.png)
+
+The endpoints and non-endpoints are indeed alternating along the curved sections! Right then, let's organise the flow for implementation based on the above.
+- The $A$ used in the previous description is kept outside the loop and updated after the description. ($\text{prev}A$)
+- If the point currently being viewed is $A$ and the next point is also $A$, then draw a straight line.
+- The point currently being viewed is $B$ and...
+    - If the next point on the glyph data is also $B$, prepare the next endpoint $A^\prime$ that is a midpoint of the two $B$s, and render the Bézier curve using $\text{prev}A$-$B$-$A^\prime$.
+    - If the next point on the glyph data is $A$, then render the Bézier curve of $\text{prev}A$-$B$-$A$.
+
+Since it is good timing, let's prepare an affine transformation matrix for coordinate conversion here, so that the starting x-coordinate and the baseline of the glyph can also be easily passed. First, we shall create a matrix to flip the coordinate system about the x-axis, enabling us to adjust the baseline and glyph x-coordinates later.
+
+$$
+\begin{bmatrix}
+x' \\
+y' \\
+1
+\end{bmatrix}
+=
+\begin{bmatrix}
+1 & 0 & \text{start x pos} \\
+0 & -1 & \text{baseline} \\
+0 & 0 & 1
+\end{bmatrix}
+\begin{bmatrix}
+x \\
+y \\
+1
+\end{bmatrix}
+$$
+
+Let's put it into code.
+
+**Glyph outline rendering with curves (FrameBufferCanvas.cpp)**
+```cpp
+void FrameBufferCanvas::setGlyphBaseline(const int baseline) {
+  transformMat[2][1] += baseline;
+}
+
+void FrameBufferCanvas::renderGlyphOutline(const Glyph& glyph,
+                                           const RGB color,
+                                           const int startX,
+                                           const int thickness) {
+  for (const auto& c : glyph.getComponents()) {
+    const auto rectSize = thickness * 2;
+    uint16_t contourStartPt = 0;
+    const auto n = c.getNumOfVertices();
+    const auto coordinates = c.getCoordinates();
+    const auto endPtsOfContours = c.getEndPtsOfContours();
+    const auto ptsOnCurve = c.getPtsOnCurve();
+
+    transformMat[2][0] = startX;
+
+    // Cache of point vectors of vertices
+    std::unordered_map<int, glm::vec2> points;
+    for (int i = 0; i < n; ++i) {
+      // Convert coordinate system from bottom-up to top-down
+      points[i] = transformVec2(transformMat, coordinates[i]);
+    }
+
+    auto prevPt = glm::vec2(0.f);
+    for (int i = 0; i < n; ++i) {
+      const auto isEndPt = endPtsOfContours.contains(i);
+      const auto nextIdx = isEndPt ? contourStartPt : (i + 1) % n;
+      const auto isOnCurve = ptsOnCurve.contains(i);
+      const auto isNextOnCurve = ptsOnCurve.contains(nextIdx);
+      // Convert coordinate system from bottom-up to top-down
+      auto currentPt = points[i];
+      auto nextPt = points[nextIdx];
+
+      if (isOnCurve) {
+        if (isNextOnCurve) {
+          drawLine(currentPt, nextPt, thickness, color);
+        }
+        prevPt = currentPt;
+      } else {
+        if (!isNextOnCurve) {
+          // Calculate the implicit next "on-curve" from the middle point of next control point
+          nextPt = (currentPt + nextPt) / 2.0f;
+        }
+        drawBezier(prevPt, currentPt, nextPt, thickness, color);
+        // Draw implicit next on-curve point
+        drawRect(nextPt, rectSize, rectSize, BLUE);
+        prevPt = nextPt;
+      }
+      drawRect(currentPt, rectSize, rectSize, isOnCurve ? RED : GREEN);
+      if (isEndPt) contourStartPt = i + 1;
+    }
+  }
+}
+
+
+void FrameBufferCanvas::drawBezier(const glm::vec2& startPt,
+                                   const glm::vec2& midPt,
+                                   const glm::vec2& endPt,
+                                   const int thickness,
+                                   const RGB color) {
+  // approximate curve length
+  const float approxLen = glm::length(midPt - startPt) + glm::length(
+                              endPt - midPt);
+  const int res = std::max(1, static_cast<int>(std::ceil(approxLen)));
+
+  glm::vec2 last = startPt;
+  for (int i = 1; i <= res; ++i) {
+    const float t = static_cast<float>(i) / static_cast<float>(res);
+    glm::vec2 cur = quadBezierLerp(startPt, midPt, endPt, t);
+    drawLine(last, cur, thickness, color);
+    last = cur;
+  }
+}
+```
+
+We've now rendered the outline!
+
+![Outline rendering result](/src/assets/images/blog/tiny-truetype-renderer/outline-rendering-result.png)
+
+https://developer.apple.com/fonts/TrueType-Reference-Manual/RM01/Chap1.html#contours
+
+## Renderer: Filling Glyph
+
+The final hurdle and the most interesting part is filling. TrueType only contains outline data for glyphs, leaving the fill method up to each renderer's implementation. For this project, we shall implement two common vector data fill methods: the Even-Odd rule and the Non-Zero rule.
+
+![Vector filling by Even-odd rule and Non-zero rule](/src/assets/images/blog/tiny-truetype-renderer/fill-rules.png)
+_Left: Colouring using the Even-Odd rule Right: Colouring using the Non-Zero rule_
+
+### Even-odd Rule
+
+This is a fairly simple algorithm: draw a straight line (scan line) from any point in any direction, and if the line intersects the shape's outline an even number of times, do not fill it; if an odd number of times, fill it. Therefore, it suffices to create a function that returns the point where a straight line intersects a line segment or a curve.
+
+#### intersection of line segments
+
+Determining whether line segments intersect is a little easier using regions. To determine the intersection of line segments $A_1A_2$ and $B_1B_2$, consider the line segment $A_1A_2$ as the boundary. If points $B_1$ and $B_2$ lie in different regions, and similarly points $A_1$ and $A_2$ lie in different regions when considering the line segment $B_1B_2$ as the boundary, then the line segments intersect. Let us express this mathematically.
+
+The equation of the line $A_1A_2$ is expressed as follows.
+
+$$
+f(x) = y = \frac{A_{2y} - A_{1y}}{A_{2x} - A_{1x}} (x - A_{1x}) + A_{1y}
+$$
+
+Modify this to create a function that returns the region when $x$ and $y$ are input.
+
+$$
+f(x,y) = (A_{2y} - A_{1y})(x - A_{1x}) - (A_{2x} - A_{1x})(y - A_{1y})
+$$
+
+Once it is established that there is an intersection point, the coordinates of the intersection point are determined using vectors.
+
+$$
+\begin{aligned}
+V_1 &= A_2 - A_1 \\
+V_2 &= B_2 - B_1
+\end{aligned}
+$$
+
+Then, any point $A(t)$ between $A_1$ and $A_2$, and similarly $B(t)$, is expressed by the following equation.
+
+$$
+\begin{aligned}
+A(t) &= A_1 + t V_1 \\
+B(u) &= B_1 + u V_2
+\end{aligned}
+$$
+
+Therefore, it suffices to find a value of $t$ or $u$ such that $A(t) = B(u)$. Using the cross product in two dimensions allows us to eliminate $u$, making the calculation straightforward.
+
+$$
+\begin{aligned}
+t V_1 - u V_2 &= B_1 - A_1 \\
+t V_1 \times V_2 - u V_2 \times V_2 &= (B_1 - A_1) \times V_2 \\
+t &= \frac{(B_1 - A_1) \times V_2}{V_1 \times V_2}
+\end{aligned}
+$$
+
+**Function to find a intersections of 2 segments (Geometry.h)**
+```cpp
+inline std::optional<glm::vec2> segmentsIntersect(
+    const glm::vec2& a1, const glm::vec2& a2,
+    const glm::vec2& b1, const glm::vec2& b2) {
+  //  >0: c is above of start-end line, <0: below, ==0: on the line
+  const auto region = [](const glm::vec2& pt, const glm::vec2& start,
+                         const glm::vec2& end) {
+    return (end.y - start.y) * (pt.x - start.x) - (end.x - start.x) * (
+             pt.y - start.y);
+  };
+  const auto ra = region(b1, a1, a2) * region(b2, a1, a2) <= 0;
+  const auto rb = region(a1, b1, b2) * region(a2, b1, b2) <= 0;
+
+  if (ra && rb) {
+    const glm::vec2 v1 = a2 - a1;
+    const glm::vec2 v2 = b2 - b1;
+
+    // 2D scalar cross product
+    auto cross = [](const glm::vec2& u, const glm::vec2& v) {
+      return u.x * v.y - u.y * v.x;
+    };
+
+    const auto denom = cross(v1, v2);
+    if (std::fabs(denom) < eps) return std::nullopt;
+    // parallel / numeric guard
+
+    const auto t = cross(b1 - a1, v2) / denom;
+    return a1 + t * v1;
+  }
+  return std::nullopt;
+}
+```
+
+#### Intersection detection for Bézier curves
+
+Next, we find the intersection points between the Bézier curve and the line segment. Since we can use the quadratic formula, let us substitute directly to obtain the $t$ value for the intersection point. When $P_i$ represents the coordinates of the control points, the quadratic Bézier curve is expressed by the following equation.
+
+$$
+P(t) = (1-t)^2 P_1 + 2(1-t)t P_2 + t^2 P_3
+$$
+
+Regarding the vector equation of the straight line mentioned earlier, decomposing the vector into $x$ and $y$ and eliminating $t$ yields:
+
+$$
+\begin{aligned}
+Q(t)  &= Q_1 + (Q_2-Q_1)t \\
+(x-x_1)(y_2 - y_1) &= (y-y_1)(x_2 - x_1)
+\end{aligned}
+$$
+
+Substitute the Bézier curve equation into these $x,y$ values and solve the quadratic equation in $t$ for the quadratic Bézier curve. Preparing the coefficient vector as follows provides a neat representation.
+
+$$
+\begin{aligned}
+L_1 &:= \text{Start of the segment} \\
+L_2 &:= \text{End of the segment} \\
+L &= L_2 - L_1 \\
+K &= \begin{bmatrix}
+L_{y} \\
+-L_{x}
+\end{bmatrix} \\
+A &= P_1 - 2P_2 + P_3 \\
+B &= 2(P_2 - P_1) \\
+C &= P_1
+\end{aligned}
+$$
+
+Thus, the quadratic equation after substitution is as follows.
+
+$$
+\big(K \cdot A \big)t^{2}
++\big(K \cdot B \big)t
++\big(K \cdot (C - L_1)\big)=0
+$$
+
+Then solve this to find $t$ and check whether it lies within $0 \leq t \leq 1$. Incidentally, the eps that appears frequently is a small value used to tolerate floating-point errors.
+
+**Function to find a intersections of a segment and a quadratic Bezier curve (Geometry.h)**
+```cpp
+inline std::vector<glm::vec2> segmentQuadBezierIntersect(
+    const glm::vec2& p1, // bezier start
+    const glm::vec2& p2, // bezier control
+    const glm::vec2& p3, // bezier end
+    const glm::vec2& l1, // line start
+    const glm::vec2& l2 // line end
+    ) {
+  const auto k = glm::vec2((l2 - l1).y, -(l2 - l1).x);
+  const auto a = p3 - 2.0f * p2 + p1;
+  const auto b = 2.0f * (p2 - p1);
+  const auto c = p1;
+
+  const auto ts = solveQuadratic(
+      dot(k, a),
+      dot(k, b),
+      dot(k, c - l1)
+      );
+
+  std::vector<glm::vec2> intersects(0);
+  for (const auto t : ts) {
+    if (-eps <= t && t <= 1.0f + eps)
+      intersects.push_back(
+          a * t * t + b * t + c);
+  }
+  return intersects;
+}
+```
+
+![bezier-segment-intersection](/src/assets/images/blog/tiny-truetype-renderer/bezier-segment-intersection.png)
+
+By the way, the analytical method can only be applied to quadratic Bézier curves where the formula for solutions can be used. Using a numerical method known as Bézier clipping, it appears that higher-order Bézier curves' intersections can be solved rapidly.
+
+http://nishitalab.org/user/nis/cdrom/cad/CAGD90Curve.pdf
+
+Now that we have a function to find the intersection point, we shall proceed to implement the filling.
+
+**Glyph rendering with Even-odd rule (FrameBufferCanvas.cpp)**
+```cpp
+void FrameBufferCanvas::renderGlyphByEvenOdd(const Glyph& glyph,
+                                             const RGB color,
+                                             const int startX) {
+  // Loop for each glyph components
+  for (const auto& c : glyph.getComponents()) {
+    const auto n = c.getNumOfVertices();
+    const auto coordinates = c.getCoordinates();
+    const auto endPtsOfContours = c.getEndPtsOfContours();
+    const auto ptsOnCurve = c.getPtsOnCurve();
+
+    transformMat[2][0] = startX;
+
+    // Cache of point vectors of vertices
+    std::unordered_map<int, glm::vec2> points;
+    for (int i = 0; i < n; ++i) {
+      // Convert coordinate system from bottom-up to top-down
+      points[i] = transformVec2(scale * transformMat, coordinates[i]);
+    }
+
+    // Loop for each scanline
+    auto rayStart = glm::vec2(0, 0);
+    auto rayEnd = glm::vec2(width, 0);
+    for (int y = 0; y < height; ++y) {
+      rayStart.y = rayEnd.y = static_cast<float>(y);
+      std::vector<int> intersections;
+      uint16_t contourStartPt = 0;
+      auto prevPt = glm::vec2(0.f);
+      // Loop for each vertex
+      for (int i = 0; i < n; ++i) {
+        const auto isEndPt = endPtsOfContours.contains(i);
+        const auto nextIdx = isEndPt ? contourStartPt : (i + 1) % n;
+        const auto isOnCurve = ptsOnCurve.contains(i);
+        const auto isNextOnCurve = ptsOnCurve.contains(nextIdx);
+        auto currentPt = points[i];
+        auto nextPt = points[nextIdx];
+
+        if (isOnCurve) {
+          if (isNextOnCurve) {
+            // on curve - on curve: Straight line
+            const auto s = segmentsIntersect(
+                currentPt, nextPt, rayStart, rayEnd);
+            if (s) {
+              intersections.emplace_back(static_cast<int>(s.value().x));
+            }
+          }
+          prevPt = currentPt;
+        } else {
+          // not on curve: Control point
+          if (!isNextOnCurve) {
+            // Calculate the implicit next "on-curve" from the middle point of next control point
+            nextPt = (currentPt + nextPt);
+            nextPt /= 2;
+          }
+          const auto ss = segmentQuadBezierIntersect(
+              prevPt,
+              currentPt,
+              nextPt,
+              rayStart,
+              rayEnd
+              );
+          const auto minY = getBezierMinY(prevPt, currentPt, nextPt);
+          for (const auto s : ss) {
+            intersections.emplace_back(static_cast<int>(s.x));
+          }
+          prevPt = nextPt;
+        }
+        if (isEndPt) contourStartPt = i + 1;
+      }
+
+      std::sort(intersections.begin(), intersections.end());
+      int cnt = 0;
+      int prevX = 0;
+      for (const auto x : intersections) {
+        if (cnt % 2 == 1) {
+          drawLine(prevX, y, x, y, 1, color);
+        }
+        cnt++;
+        prevX = x;
+      }
+    }
+  }
+}
+```
+
+![evenodd-buggy-fill](/src/assets/images/blog/tiny-truetype-renderer/evenodd-buggy-fill.png)
+
+Close! It's almost completely filled in, but a peculiar line has appeared. It seems an error occurs when two line segments or curves share endpoints. Upon closer inspection, I discovered incorrect filling occurs in the following two patterns. When there is an intersection at the same coordinates, there are cases where both should be counted as intersections and cases where they should be ignored.
+
+For example, in the error shown in the image below, five intersection points with x-coordinates 421, 421, 679, 701, and 823 are counted from the left. The line segment from 421 to 421 was drawn, causing the subsequent segments to be inverted.
+
+![evenodd-error-too-many-counting](/src/assets/images/blog/tiny-truetype-renderer/evenodd-error-too-many-counting.png)
+_Counting too much_
+
+Conversely, in the following pattern, only the three points with x-coordinates 394, 701, and 823 from the left are counted, and the line segment is drawn only between 394 and 701. It should properly count points with x-coordinates 394, 701, 701, 823 or 394, 823 from the left.
+
+![evenodd-error-too-little-counting](/src/assets/images/blog/tiny-truetype-renderer/evenodd-error-too-little-counting.png)
+_Count too less_
+
+#### Removal of fill errors
+
+Is there a unified way for determining such seemingly inconsistent behaviour? To simplify the problem initially, let's consider when double counting should occur, or should not occur, by examining straight line segments.
+
+Consider two line segments $A$ and $B$ sharing a common endpoint, and when the scan line passes through that coordinate, let us consider the other endpoint of $A$ and $B$.
+
+- If both endpoints $A$ and $B$ are clustered either above or below the scanline, they should be either double-counted or ignored.
+- When the endpoints $A$ and $B$ are separated above and below the scan line, count only once; that is, ignore one of them.
+
+When the endpoints divided into upper and lower regions, the two line segments should be treated as a single line segment; even if they share endpoints, they should not be counted twice at that point.
+
+Counting intersections only when the minimum value of the line segment is smaller than the scan line should satisfy the above two conditions.
+Strictly speaking, this method is not a perfect solution as it results in one pixel not being rendered when both endpoints lie below the scan line. However, as it eliminates the error, we shall adopt this approach for the time being.
+
+![segment-evenodd-error-fixing](/src/assets/images/blog/tiny-truetype-renderer/segment-evenodd-error-fixing.png)
+
+Next, let's consider curves. Fundamentally, they are the same as straight lines, but we additionally consider the following patterns.
+
+
+- Count when the curve's endpoint lies below the scan line, but part of the curve lies above it.
+- When the endpoint of a curve lies above the scan line but part of the curve lies below it, ignore it.
+
+![bezier-evenodd-error-fixing](/src/assets/images/blog/tiny-truetype-renderer/bezier-evenodd-error-fixing.png)
+
+To perform this check simply, it would seem sufficient to find the curve's minimum value. As mentioned earlier, quadratic Bézier curves can be expressed as quadratic equations. Therefore, we determine the parameter $t$ at the minimum point and verify whether $t$ lies within the curve and whether the curve is convex upwards in the image coordinate system with the origin at the top left.
+
+$$
+\begin{aligned}
+y(t) &= (1-t)^2 y_{P_1} + 2(1-t)t y_{P_2} + t^2 y_{P_3} \\
+y(t) &= (y_{P_1} - 2y_{P_2} + y_{P_3})t^2 + 2(y_{P_2} - y_{P_1})t + y_{P_1}
+\end{aligned}
+$$
+
+Taking the derivative as follows,
+
+$$
+\begin{aligned}
+a &= y_{P_1} - 2y_{P_2} + y_{P_3} \\
+b &= 2(y_{P_2} - y_{P_1}) \\
+c &= y_{P_1} \\
+\\
+y^\prime(t) &= 2at + b
+\end{aligned}
+$$
+
+Using this $t$ to verify the earlier condition will suffice!
+
+**Find a minimum curve of a quad Bézier curve (Geometry.h)**
+```cpp
+inline int getBezierMinY(
+    const glm::vec2& p1, // bezier start
+    const glm::vec2& p2, // bezier control
+    const glm::vec2& p3 // bezier end
+    ) {
+  const auto a = p1.y - 2 * p2.y + p3.y;
+  const auto b = 2 * (p2.y - p1.y);
+
+  if (fabs(a) < eps) {
+    if (fabs(b) < eps) return static_cast<int>(p1.y);
+    return static_cast<int>(std::min(p1.y, p3.y));
+  }
+  // find the parameter when the curve reaches its extremum by taking the derivative
+  const auto t = -b / (2.0f * a);
+  // if the curve is convex upwards, the extremum can be the minimum y
+  if (-eps <= t && t <= 1.0f + eps && a > 0) {
+    return static_cast<int>(a * t * t + b * t + p1.y);
+  }
+  return static_cast<int>(std::min(p1.y, p3.y));
+}
+```
+
+Finally, we check if the curve is concave downward. The condition is that when the scan line shares the same y-coordinate as one endpoint of the curve, the scan line and curve have two points of intersection, and if the curve is convex downward, we may safely ignore the count for the endpoint sharing the same y-coordinate as the scan line. This allowed us to fill it in neatly!
+
+**Fix the error caused on segment intersections (FrameBufferCanvas.cpp)**
+```cpp
+void FrameBufferCanvas::renderGlyphByEvenOdd(const Glyph& glyph,
+                                             const RGB color,
+                                             const int startX) {
+  // Loop for each glyph components
+  for (const auto& c : glyph.getComponents()) {
+    const auto n = c.getNumOfVertices();
+    const auto coordinates = c.getCoordinates();
+    const auto endPtsOfContours = c.getEndPtsOfContours();
+    const auto ptsOnCurve = c.getPtsOnCurve();
+
+    transformMat[2][0] = startX;
+
+    // Cache of point vectors of vertices
+    std::unordered_map<int, glm::vec2> points;
+    for (int i = 0; i < n; ++i) {
+      // Convert coordinate system from bottom-up to top-down
+      points[i] = transformVec2(scale * transformMat, coordinates[i]);
+    }
+
+    // Loop for each scanline
+    auto rayStart = glm::vec2(0, 0);
+    auto rayEnd = glm::vec2(width, 0);
+    for (int y = 0; y < height; ++y) {
+      rayStart.y = rayEnd.y = static_cast<float>(y);
+      std::vector<int> intersections;
+      uint16_t contourStartPt = 0;
+      auto prevPt = glm::vec2(0.f);
+      // Loop for each vertex
+      for (int i = 0; i < n; ++i) {
+        const auto isEndPt = endPtsOfContours.contains(i);
+        const auto nextIdx = isEndPt ? contourStartPt : (i + 1) % n;
+        const auto isOnCurve = ptsOnCurve.contains(i);
+        const auto isNextOnCurve = ptsOnCurve.contains(nextIdx);
+        auto currentPt = points[i];
+        auto nextPt = points[nextIdx];
+
+        if (isOnCurve) {
+          if (isNextOnCurve) {
+            // on curve - on curve: Straight line
+            const auto s = segmentsIntersect(
+                currentPt, nextPt, rayStart, rayEnd);
+            const auto minY = static_cast<int>(std::min(currentPt.y, nextPt.y));
+            if (s && minY < y) {
+              intersections.emplace_back(static_cast<int>(s.value().x));
+            }
+          }
+          prevPt = currentPt;
+        } else {
+          // not on curve: Control point
+          if (!isNextOnCurve) {
+            // Calculate the implicit next "on-curve" from the middle point of next control point
+            nextPt = (currentPt + nextPt);
+            nextPt /= 2;
+          }
+          const auto ss = segmentQuadBezierIntersect(
+              prevPt,
+              currentPt,
+              nextPt,
+              rayStart,
+              rayEnd
+              );
+          const auto minY = getBezierMinY(prevPt, currentPt, nextPt);
+          if (ss.size() == 2 &&
+              !isBezierConvexUpwards(prevPt, currentPt, nextPt)) {
+            if (y == static_cast<int>(prevPt.x) || y == static_cast<int>(nextPt.
+                  x)) {
+              if (static_cast<int>(ss[0].x) == static_cast<int>(prevPt.x)) {
+                intersections.emplace_back(static_cast<int>(ss[1].x));
+              } else {
+                intersections.emplace_back(static_cast<int>(ss[0].x));
+              }
+            }
+          } else if (minY < y) {
+            for (const auto s : ss) {
+              intersections.emplace_back(static_cast<int>(s.x));
+            }
+          }
+          prevPt = nextPt;
+        }
+        if (isEndPt) contourStartPt = i + 1;
+      }
+
+      std::sort(intersections.begin(), intersections.end());
+      int cnt = 0;
+      int prevX = 0;
+      for (const auto x : intersections) {
+        if (cnt % 2 == 1) {
+          drawLine(prevX, y, x, y, 1, color);
+        }
+        cnt++;
+        prevX = x;
+      }
+    }
+  }
+}
+```
+
+![evenodd-final](/src/assets/images/blog/tiny-truetype-renderer/evenodd-final.png)
+
+### Non-zero Rule
+
+The Even-Odd rule is a simple algorithm, yet it leaves holes when contours overlap, as shown below.
+
+![evenodd-overwrap](/src/assets/images/blog/tiny-truetype-renderer/evenodd-overwrap.png)
+
+One method for improving this is the Non-zero rule. The Non-zero rule is fundamentally the same as the Even-odd rule, using scan lines to examine points intersecting contours. However, instead of counting the parity of the number of intersections, it counts the direction of the line forming the outline that the scan line crosses: +1 if the line points upwards, -1 if it points downwards. It then fills the area when the count is greater than zero, enabling filling without creating holes. This method utilises the fact that the vertices forming a glyph's outline are arranged either clockwise. Incidentally, browsers employ the Non-zero method for the default fill of SVG elements.
+
+![non-zero-explanation](/src/assets/images/blog/tiny-truetype-renderer/non-zero-explanation.png)
+
+Let us implement it considering only line segments for now. Instead of counting the number of crossings between even and odd segments, we shall replace it with the following processing.
+
+- When `currentPt.y > nextPt.y`, assign `isUpward` to the intersection.
+- Fill only the intervals where `isUpward` is greater than zero.
+
+**Considering line direction at intersection counting (FrameBufferCanvas.cpp)**
+```cpp
+...
+if (isOnCurve) {
+  if (isNextOnCurve) {
+    // on curve - on curve: Straight line
+    const auto s = segmentsIntersect(
+        currentPt, nextPt, rayStart, rayEnd);
+    const auto minY = static_cast<int>(std::min(currentPt.y, nextPt.y));
+    if (s && minY < y) {
+      intersections.emplace_back(
+          static_cast<int>(s.value().x),
+          currentPt.y > nextPt.y);
+    }
+  }
+  prevPt = currentPt;
+}
+...
+int prevCount = 0;
+int prevX = 0;
+int count = 0;
+for (const auto& [x, isUpward] : intersections) {
+  isUpward ? ++count : --count;
+  if (prevCount > 0 && count >= 0) {
+    drawLine(prevX, y, x, y, 1, WHITE);
+  }
+  prevCount = count;
+  prevX = x;
+}
+```
+
+When comparing glyphs composed solely of straight lines, it already fills in perfectly!
+
+![evenodd-straight-line](/src/assets/images/blog/tiny-truetype-renderer/evenodd-straight-line.png)
+_In the even-odd rule, the glyph that was previously a hole..._
+
+![nonzero-straight-line](/src/assets/images/blog/tiny-truetype-renderer/nonzero-straight-line.png)
+_...now got perfect filling by non-zero rule_
+
+Even with curves, it actually paints almost without issue, but there are some minor cases where it does not work well, as shown below.
+
+![nonzero-error-on-curve-width-dots](/src/assets/images/blog/tiny-truetype-renderer/nonzero-error-on-curve-width-dots.png)
+
+The line segment at the error location in the bottom right has been added to the intersections as \{x: 713, isUpwards: true\}, \{x: 902, isUpwards: false\} and looks fine; any error does not appear to be occurring at the endpoints of the line segment. Upon closer inspection, an error also exists at the lower left with the same y-coordinate as the lower right error location, and this was actually the cause. It's a bit difficult to spot, but you can see that the portion where the curve should actually continue slightly higher up in the lower left is not being drawn.
+
+The issue here concerns determining the direction of a line when there are two intersection points between a scanline and a curve. Comparing the y-coordinates of the curve's endpoints alone does not reveal the respective directions of the two intersection points, leading to incorrect counting and errors. In this case, counting as shown in the diagram below should enable successful rendering.
+
+![nonzero-curve-2-intersections](/src/assets/images/blog/tiny-truetype-renderer/nonzero-curve-2-intersections.png)
+_Two patterns when a scanline and a curve have two points of intersection_
+
+Observing this diagram, you can see that the curve's convexity and the starting position of the line segment are the two elements required for determination.
+
+- When convex upwards, the intersection point closer to the start of the line segment faces upwards, while the other faces downwards.
+- When concave downwards, the intersection point closer to the start of the line segment faces downwards, while the other faces upwards.
+
+It was a surprisingly simple check to cover this issue!
+
+**Fixing the counting error of Bézier curve (FrameBufferCanvas.cpp)**
+```cpp
+void FrameBufferCanvas::renderGlyphByNonZero(const Glyph& glyph,
+                                             const RGB color,
+                                             const int startX) {
+  // Loop for each glyph components
+  for (const auto& c : glyph.getComponents()) {
+    const auto n = c.getNumOfVertices();
+    const auto coordinates = c.getCoordinates();
+    const auto endPtsOfContours = c.getEndPtsOfContours();
+    const auto ptsOnCurve = c.getPtsOnCurve();
+    const auto rect = c.getBoundingRect();
+
+    transformMat[2][0] = startX;
+
+    // Cache of point vectors of vertices
+    std::unordered_map<int, glm::vec2> points;
+    for (int i = 0; i < n; ++i) {
+      // Convert coordinate system from bottom-up to top-down
+      points[i] = transformVec2(scale * transformMat, coordinates[i]);
+    }
+    auto rayStart = glm::vec2(0, 0);
+    auto rayEnd = glm::vec2(width, 0);
+
+    // Transform the coordinate of the bounding rect
+    const auto top = transformVec2(
+        scale * transformMat, glm::vec2(0, rect.yMax)).y;
+    const auto bottom = transformVec2(
+        scale * transformMat, glm::vec2(0, rect.yMin)).y;
+    for (int y = top; y < bottom; ++y) {
+      rayStart.y = rayEnd.y = static_cast<float>(y);
+      std::vector<Intersection> intersections;
+      uint16_t contourStartPt = 0;
+      auto prevPt = glm::vec2{0, 0};
+      // Loop for each vertex
+      for (int i = 0; i < n; ++i) {
+        const auto isEndPt = endPtsOfContours.contains(i);
+        const auto nextIdx = isEndPt ? contourStartPt : (i + 1) % n;
+        const auto isOnCurve = ptsOnCurve.contains(i);
+        const auto isNextOnCurve = ptsOnCurve.contains(nextIdx);
+        auto currentPt = points[i];
+        auto nextPt = points[nextIdx];
+
+        if (isOnCurve) {
+          if (isNextOnCurve) {
+            // on curve - on curve: Straight line
+            const auto s = segmentsIntersect(
+                currentPt, nextPt, rayStart, rayEnd);
+            const auto minY = static_cast<int>(std::min(currentPt.y, nextPt.y));
+            if (s && minY < y) {
+              intersections.emplace_back(
+                  static_cast<int>(s.value().x),
+                  currentPt.y > nextPt.y);
+            }
+          }
+          prevPt = currentPt;
+        } else {
+          // not on curve: Control point
+          if (!isNextOnCurve) {
+            // Calculate the implicit next "on-curve" from the middle point of next control point
+            nextPt = (currentPt + nextPt);
+            nextPt /= 2;
+          }
+          // bezier line
+          const auto ss = segmentQuadBezierIntersect(
+              prevPt,
+              currentPt,
+              nextPt,
+              rayStart,
+              rayEnd
+              );
+
+          const auto minY = getBezierMinY(prevPt, currentPt, nextPt);
+          if (minY < y) {
+            if (ss.size() == 1) {
+              intersections.emplace_back(static_cast<int>(ss[0].x),
+                                         prevPt.y > nextPt.y);
+            } else if (ss.size() == 2) {
+              auto nearestX = [&](const glm::vec2& pt) -> int {
+                return static_cast<int>((std::fabs(pt.x - ss[0].x) <
+                                         std::fabs(pt.x - ss[1].x))
+                                          ? ss[0].x
+                                          : ss[1].x);
+              };
+              const int closeXtoCur = nearestX(prevPt);
+              const int closeXtoNxt = nearestX(nextPt);
+              const auto convexUpwards = isBezierConvexUpwards(
+                  prevPt, currentPt, nextPt);
+              intersections.emplace_back(closeXtoCur, convexUpwards);
+              intersections.emplace_back(closeXtoNxt, !convexUpwards);
+            }
+          }
+          prevPt = nextPt;
+        }
+        if (isEndPt) contourStartPt = i + 1;
+      }
+
+      std::sort(intersections.begin(), intersections.end(),
+                [](const Intersection& a, const Intersection& b) {
+                  return a.x < b.x;
+                });
+      int prevCount = 0;
+      int prevX = 0;
+      int count = 0;
+      for (const auto& [x, isUpward] : intersections) {
+        isUpward ? ++count : --count;
+        if (prevCount > 0 && count >= 0) {
+          drawLine(prevX, y, x, y, 1, color);
+        }
+        prevCount = count;
+        prevX = x;
+      }
+    }
+  }
+}
+```
+
+![non-zero-final](/src/assets/images/blog/tiny-truetype-renderer/nonzero-final.png)
+_Perfect!_
+
+You can now display any string using your own TrueType parser and renderer. Well done!
+
+![final-rendering-result](/src/assets/images/blog/tiny-truetype-renderer/result.png)
+
+## Conclusion
+First of all, thank you for reading this lengthy article to the end! By loading each byte sequentially and starting with the rendering of a single pixel, I believe you've gained a broad understanding of what occurs in the world of fonts and 2D rendering—aspects we don't typically consciously consider.
+
+The parser and renderer created in this article possess only the bare minimal functionality, and TrueType fonts still hold many fascinating topics. For instance, hinting is a technique for fine-tuning glyph positions to improve readability in low-resolution environments. Other topics include kerning, ligatures, and vertical text are also quite interesting. Whilst performance wasn't a consideration in this project, there are entirely different algorithms for parallelising rendering using GPUs. If these pique your interest, I'd encourage you to build them yourself to gain a deeper understanding!
+
+## References
+
+https://developer.apple.com/fonts/TrueType-Reference-Manual/
+
+https://learn.microsoft.com/en-us/typography/opentype/spec/ttch01
+
+https://fontforge.org/docs/tutorial.html
+
+https://wikipedia.org/wiki/TrueType
+
+https://haqr.eu/tinyrenderer/
+
+https://pomax.github.io/bezierinfo/index.html
+
+https://en.wikipedia.org/wiki/Linear_interpolation
+
+https://en.wikipedia.org/wiki/Even%E2%80%93odd_rule
+
+https://en.wikipedia.org/wiki/Nonzero-rule

@@ -28,7 +28,7 @@ const { Content } = await render(post);
 ---
 
 <BaseSite>
-  <article class={s.post}>
+  <article id="blog-post" class={s.post}>
     <hgroup class={s.hgroup}>
       <span class={s.titleWrap}>
         <span class={s.date}>
@@ -44,3 +44,38 @@ const { Content } = await render(post);
     </div>
   </article>
 </BaseSite>
+
+<script>
+  // Target p that has strong and has .astro-code as a next element sibling
+  const codeTitleEls = document.querySelectorAll(
+    "p:has(strong):has(+ .astro-code)",
+  );
+  if (codeTitleEls) {
+    for (const titleEl of codeTitleEls) {
+      const preEl = titleEl.nextElementSibling;
+      if (!preEl) continue;
+
+      // init
+      titleEl.setAttribute("tabindex", "0");
+      (preEl as HTMLPreElement).style.display = "none";
+
+      function handleCodeTitleClick(e: Event) {
+        if (e instanceof KeyboardEvent) {
+          if (e.key !== " " && e.key !== "Enter") return;
+          e.preventDefault();
+        }
+
+        titleEl.toggleAttribute("active");
+        const currentDisplay = (preEl as HTMLPreElement).style.display;
+        if (currentDisplay !== "none") {
+          (preEl as HTMLPreElement).style.display = "none";
+        } else {
+          (preEl as HTMLPreElement).style.display = "block";
+        }
+      }
+
+      titleEl.addEventListener("click", handleCodeTitleClick);
+      titleEl.addEventListener("keydown", handleCodeTitleClick);
+    }
+  }
+</script>

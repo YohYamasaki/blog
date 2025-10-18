@@ -1,6 +1,7 @@
 .post {
   margin-top: var(--size-4xl);
-  max-width: 740px;
+  width: 100%;
+  max-width: 800px;
   margin-inline: auto;
   border: 1px solid var(--outline);
   position: relative;
@@ -61,5 +62,5 @@
 }
 
 .body {
-  padding: var(--size-l);
+  padding: var(--size-xl);
 }

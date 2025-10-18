@@ -5,13 +5,14 @@ import solidJs from "@astrojs/solid-js";
 import { defineConfig } from "astro/config";
 import rehypeKatex from "rehype-katex";
 import remarkMath from "remark-math";
+import remarkLinkCard from "remark-link-card-plus";
 
 // https://astro.build/config
 export default defineConfig({
   site: "https://yayo1.com",
   integrations: [
     mdx({
-      remarkPlugins: [remarkMath],
+      remarkPlugins: [remarkMath, remarkLinkCard],
       rehypePlugins: [[rehypeKatex]],
     }),
     sitemap(),
