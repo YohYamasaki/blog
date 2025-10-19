@@ -97,7 +97,7 @@ body {
   overflow-wrap: break-word;
   line-height: 1.8;
   font-size: var(--text-base);
-  font-family: "Noto Sans JP", sans-serif;
+  font-family: sans-serif;
 }
 main {
   max-width: 1400px;

@@ -96,7 +96,7 @@
     width: 100%;
     padding: 0 var(--size-s);
     border-bottom: 1px solid var(--outline);
-    justify-content: center;
+    justify-content: space-between;
     display: none;
   }
 
