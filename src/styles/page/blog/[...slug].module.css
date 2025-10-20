@@ -5,6 +5,7 @@
   margin-inline: auto;
   border: 1px solid var(--outline);
   position: relative;
+  background-color: var(--surface-container-lowest);
 }
 
 .post::after {

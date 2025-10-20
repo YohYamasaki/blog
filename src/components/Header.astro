@@ -52,6 +52,12 @@ const notCurrentLang = currentLang === "en" ? "ja" : "en";
   }
   toggleEl?.addEventListener("click", toggleTheme);
 
+  function setPreferredTheme() {
+  const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+  document.body.setAttribute('data-theme', prefersDark ? 'dark' : 'light');
+  }
+  setPreferredTheme();
+
   const menuBtnEl = document.getElementById("menu-btn");
   function toggleMenu() {
     const menuBtn = document.getElementById("menu-btn");
