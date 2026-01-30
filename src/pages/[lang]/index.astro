@@ -4,6 +4,7 @@ import BlogCard from "../../components/BlogCard.astro";
 import { langParams } from "../../i18n/ui";
 import BaseSite from "../../layouts/BaseSite.astro";
 import s from "../../styles/page/index.module.css";
+import { useTranslations } from "../../i18n/utils.ts";
 
 export async function getStaticPaths() {
   return langParams;
@@ -14,16 +15,24 @@ const { lang } = Astro.params;
 const posts = (
   await getCollection("blog", (entry) => entry.id.startsWith(lang))
 ).sort((a, b) => b.data.pubDate.valueOf() - a.data.pubDate.valueOf());
+const t = useTranslations(lang);
+const headProps = {
+  title: t("blogIndex.title"),
+  description: t("blogIndex.description"),
+};
 ---
 
-<BaseSite>
+<BaseSite {...headProps}>
   <h1 class={s.title}>Posts</h1>
   <div class={s.blogWrap}>
-    {posts
-      .sort(
-        (a, b) =>
-          a.data.pubDate.getMilliseconds() - b.data.pubDate.getMilliseconds()
-      )
-      .map((p) => <BlogCard post={p} />)}
+    {
+      posts
+        .sort(
+          (a, b) =>
+            a.data.pubDate.getMilliseconds() -
+            b.data.pubDate.getMilliseconds(),
+        )
+        .map((p) => <BlogCard post={p} />)
+    }
   </div>
 </BaseSite>

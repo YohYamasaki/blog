@@ -25,9 +25,13 @@ type Props = CollectionEntry<"blog">;
 
 const post = Astro.props;
 const { Content } = await render(post);
+const headProps = {
+  title: post.data.title,
+  description: post.data.description,
+};
 ---
 
-<BaseSite>
+<BaseSite {...headProps}>
   <article id="blog-post" class={s.post}>
     <hgroup class={s.hgroup}>
       <span class={s.titleWrap}>
