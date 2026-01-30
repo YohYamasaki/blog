@@ -20,7 +20,6 @@ You can find the Japanese version of this article from below.
 
 https://zenn.dev/yayo1/articles/1273ec6ac3bc17
 
-
 ## What is a prefix sum?
 
 Given an array $A$, a prefix sum array $S$ is defined as $S[i] = S[i-1] + A[i]$. In other words, $S[i]$ contains the sum of $A[0..i]$ for inclusive scan or $A[0..i-1]$ for exclusive scan. Prefix sums show up everywhere, i.e. radix sort, quadtrees, and a bunch of other “build a structure from counts/offsets” workloads.
@@ -234,7 +233,6 @@ In my measurement at $N = 10^8$, it took 104.36 ms, which is consistent with “
 
 Also, if you execute Hillis–Steele on a single thread, the total work is $O(N \log N)$, which is not optimal compared to $O(N)$ algorithms.
 
-
 ## Blelloch scan
 
 Blelloch scan fixes the two big Hillis–Steele issues,
@@ -245,12 +243,12 @@ Blelloch scan fixes the two big Hillis–Steele issues,
 Blelloch has two phases, up-sweep for building partial sums in a tree-reduction pattern, then down-sweep for converting the tree sums into a prefix sum. The bottom pictures demonstrates exclusive scan with Blelloch's algorithm.
 
 ![Blelloch up-sweep](/src/assets/images/blog/parallel-prefix-sum/blelloch-up-sweep.png)
-*Up-sweep phase of Blelloch scan*
+_Up-sweep phase of Blelloch scan_
 
 Before the down-sweep, you set the last element to 0. In down-sweep, if we call the previous index $L$ and the current index $R$, the core update is $S[L] = S[R], \quad S[R] = S[R] + S[L]$.
 
 ![Blelloch down-sweep.png](/src/assets/images/blog/parallel-prefix-sum/blelloch-down-sweep.png)
-*Down-sweep phase of Blelloch scan*
+_Down-sweep phase of Blelloch scan_
 
 It looks like wizardry, but if you trace one element backward through the tree it really does become the right prefix sum.
 
@@ -330,7 +328,6 @@ fn main(
 
 Much better than Hillis–Steele, but still not ideal. Even though we reduced work, this implementation still hits global memory a lot (roughly $7N$ reads/writes on my implementation I guess), so there’s room to improve.
 
-
 ## Blocked Blelloch scan
 
 The next optimization is using workgroup (shared) memory. In WGSL that’s `var<workgroup>`.
@@ -343,13 +340,13 @@ We pick the block size to match the workgroup size. Then,
 - Add those offsets back into the already-scanned blocks (“carry add”)
 
 ![Block scan](/src/assets/images/blog/parallel-prefix-sum/block-scan.png)
-*Blocked scanning*
+_Blocked scanning_
 
 Scanning block sum array is itself a prefix sum problem, so we apply the same logic recursively until the block sum array fits into a single block.
 
 ### Implementation
 
-The core idea is still Blelloch's, but we use workgroup memory to reduce the amount of global memory access.  This enables us to move the up-sweep and down-sweep loops into a single shader, as we can use a workgroup barrier to synchronise the work within a workgroup. This greatly simplifies the implementation of recursive calls to the scan.
+The core idea is still Blelloch's, but we use workgroup memory to reduce the amount of global memory access. This enables us to move the up-sweep and down-sweep loops into a single shader, as we can use a workgroup barrier to synchronise the work within a workgroup. This greatly simplifies the implementation of recursive calls to the scan.
 
 ```wgsl
 // blelloch_block_scan.wgsl
@@ -485,7 +482,6 @@ This was slightly faster than the global-memory version, and it got roughly comp
 I also tried the “process 2 or 4 elements per thread” optimization mentioned in GPU Gems 3, but on my setup it actually got slower. I tested workgroup sizes from 32 to 256, and 64 was consistently best. My guess is that with more barriers, larger workgroups (or heavier per-thread work) create more imbalance and longer waits at the barriers, but this part is speculation.
 
 Anyway, even with blocked Blelloch scan, it wasn’t clearly beating the CPU.
-
 
 ## Scan by subgroups
 

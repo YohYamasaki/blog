@@ -31,14 +31,14 @@ TrueType is a font format that achieves scalable rendering by employing vector g
 In TrueType, lines are categorised into two types: straight lines and curves, with curves represented using quadratic Bézier curves. Connecting lines forms a contour. While the term “glyph contour” may be difficult to visualise, consider the letter “B” below: it consists of one outer contour and two inner contours, totalling three contours.
 
 !["B" with outline](/src/assets/images/blog/tiny-truetype-renderer/truetype-example.png)
-*From [Digitizing Letterform Designs - TrueType Reference Manual - Apple Developer](https://developer.apple.com/fonts/TrueType-Reference-Manual/RM01/Chap1.html)*
+_From [Digitizing Letterform Designs - TrueType Reference Manual - Apple Developer](https://developer.apple.com/fonts/TrueType-Reference-Manual/RM01/Chap1.html)_
 
 Furthermore, some glyphs can be expressed by combining multiple glyphs. These are called compound glyphs. For example, ‘Ü’ is a compound glyph using ‘U’. Once all the necessary outlines for a single glyph have been obtained in this manner, it is filled in to complete the rendering.
 
 TrueType data is represented in tables. Though termed tables, the data is packed directly into byte sequences, making them essentially one-dimensional. For instance, accessing a cmap table involves moving XXXX bytes from the file's start using the provided offset.
 
 ![TrueType table structure](/src/assets/images/blog/tiny-truetype-renderer/truetype-structure.png)
-*This diagram is merely illustrative; the arrangement of tables and byte counts are arbitrary.*
+_This diagram is merely illustrative; the arrangement of tables and byte counts are arbitrary._
 
 Have you begun to grasp the "contours" of TrueType? If so, several questions may spring to mind. How to access the glyph data? How are curves rendered? What about fill methods? And so on... Here, it suffices to gain that sense before diving into implementation. Now then, let us proceed to actually parse the TrueType file!
 
@@ -55,8 +55,8 @@ Incidentally, TrueType contains special data types beyond the usual ones like ui
 
 https://developer.apple.com/fonts/TrueType-Reference-Manual/RM06/Chap6.html
 
-
 **Byte readers (FontParser.cpp)**
+
 ```cpp
 FontParser::FontParser(const std::string& path) {
   ifs.open(path, std::ios::binary);
@@ -110,14 +110,12 @@ float FontParser::readF2Dot14() {
 
 Upon loading the file, the table directory appears first. This contains the information required to access the tables packed within the TrueType file. Data for loading the table directory is arranged in the offset table, followed by the table directory itself, which continues for the number of tables specified by numTables after the final byte of the offset table.
 
-
 https://developer.apple.com/fonts/TrueType-Reference-Manual/RM06/Chap6.html
-
 
 This is the structure of the table directory. It stores the offsets for jumping to each table. Since we will be jumping to each table multiple times to get glyph data, let's store it in the parser's field as a hash map.
 
-
 **Parser for table directory (FontParser.cpp)**
+
 ```cpp
 FontParser::FontParser(const std::string& path) {
   ifs.open(path, std::ios::binary);
@@ -153,6 +151,7 @@ The cmap is divided into an index table, sub-tables, and mapping tables. Each su
 In the implementation, simply loop through the numberSubtables count and read the Unicode -> GlyphCode mappings from the grouping. The grouping structure is unique; rather than a simple one-to-one mapping, only the first and last Unicode values and the first GlyphCode are provided for each group. Within this Unicode range, the corresponding GlyphCodes are listed sequentially. It would be easier to understand if you could see the implementation. As before, storing this as a hash map is convenient.
 
 **Unicode→GlyphCode mapping (FontParser.cpp)**
+
 ```cpp
 void FontParser::loadUnicodeToGlyphCodeMap() {
   const auto cmapOffset = directory["cmap"].offset;
@@ -206,6 +205,7 @@ Once you have obtained the GlyphCode, you can access the glyph by obtaining the 
 Additionally, a minor point is that for GlyphCodes without a glyph, the offset will be the same value as the next glyph. I wondered what a GlyphCode without a glyph could be, but it seems spaces and such fall into this category. Aha! If this check isn't enabled, for example in Noto Sans JP, the space character ‘　’ would be incorrectly mapped to the offset of the comma ‘、’ instead.
 
 **GlyphCode→GlyphOffset mapping (FontParser.cpp)**
+
 ```cpp
 void FontParser::loadGlyphOffsetsMap() {
   jumpTo(directory["maxp"].offset + 4);
@@ -238,11 +238,13 @@ https://developer.apple.com/fonts/TrueType-Reference-Manual/RM06/Chap6head.html
 https://developer.apple.com/fonts/TrueType-Reference-Manual/RM06/Chap6maxp.html
 
 ### hhea, hmtx tables
+
 Readers who have followed this far may not be surprised to learn that some glyph information required for rendering is scattered beyond the glyf table. Particularly crucial is the metric data needed for the horizontal layout of glyphs. The hhea table contains size-related data for the entire font, while the hmtx table holds such data for each individual glyph. If one were merely arranging glyphs horizontally for image output, knowing the font's maximum height and each glyph's width would suffice. The height is found in the `ascent` and `descent` fields of the hhea table, while the width of each glyph is stored in the hmtx table.
 
 The hmtx table contains information for each glyph ID within an array, but the array length must be obtained from the NumberOfMetrics field in the hhea table. This is because, for monospace fonts, information for each glyph is not required; sometimes only one is provided, or none at all. The advanceWidth contained within longHorMetric represents the total width of the glyph and the value indicating how far it shifts left within the leftSideBearing width. I couldn't quite grasp the leftSideBearing[] in the hmtx table, so I'll ignore that for now.
 
 **Parser for glyph metrics (FontParser.cpp)**
+
 ```cpp
 FontMetric FontParser::getFontMetric() {
   jumpTo(directory["hhea"].offset);
@@ -282,6 +284,7 @@ First, we create the rendering methods. For point rendering, update the target p
 The line drawing algorithm was borrowed from [Bresenham’s line drawing - Playing with code](https://haqr.eu/tinyrenderer/bresenham/). This is a tutorial for building your own 3D renderer, it is highly recommended.
 
 **Very initial impl. of FrameBufferCanvas.cpp**
+
 ```cpp
 struct RGB {
   unsigned r, g, b;
@@ -377,6 +380,7 @@ void FrameBufferCanvas::writePngFile(const char* fileName) const {
 ```
 
 **main.cpp**
+
 ```cpp
 int main() {
   FrameBufferCanvas canvas{500, 500};
@@ -419,6 +423,7 @@ On Curve contains the information required to render Bézier curves. This will b
 Implementation. There are two types of glyphs, but by structuring Glyph object to hold zero or more GlyphComponents, both types can utilise the same structure. Therefore, in the implementation, a Simple glyph becomes a Glyph holding either zero or one GlyphComponent. Regarding getGlyphComponent, it receives an affineMat, but as this is for Component Glyphs, so passing an identity matrix is sufficient for Simple glyphs.
 
 **Glyph.h**
+
 ```cpp
 struct Metric {
   uint16_t advanceWidth;
@@ -440,6 +445,7 @@ private:
 ```
 
 **GlyphComponent.h**
+
 ```cpp
 class GlyphComponent {
 public:
@@ -467,6 +473,7 @@ private:
 ```
 
 **Parser for simple glyphs (FontParser.cpp)**
+
 ```cpp
 Glyph FontParser::getGlyph(const uint32_t cp) {
   if (!unicodeToGlyphCode.contains(cp)) {
@@ -591,6 +598,7 @@ std::vector<int> FontParser::getGlyphCoordinates(const uint16_t& n,
 Now let's connect the x and y coordinates obtained by parsing the glyph with a straight line. The glyph coordinates are in a Cartesian coordinate system, but the framebuffer uses an image coordinate system where the top-left corner is the origin, so a coordinate transformation is required. For now, let's simply flip the output image upside down. We'll handle the proper coordinate transformation later.
 
 **Glyph outline rendering with straight lines (FrameBufferCanvas.cpp)**
+
 ```cpp
 void FrameBufferCanvas::renderGlyphOutline(const unsigned int startX,
                                     const unsigned int startY,
@@ -619,6 +627,7 @@ void FrameBufferCanvas::renderGlyphOutline(const unsigned int startX,
 ```
 
 **main.cpp**
+
 ```cpp
 int main() {
   FontParser parser("fonts/JetBrainsMono-Bold.ttf");
@@ -639,7 +648,7 @@ The outline has been rendered! It's still a bit blocky, but don't you think it's
 If you have successfully loaded the Simple glyph data, you are now ready to handle Compound glyphs. The concept of Compound glyphs is quite straightforward: if parts of glyphs share the same shape, such as ‘o’ and ‘ö’, or “i” and ‘j’, those parts can be shared. However, to combine glyphs, you must specify the position, size, and transformation method for each element within the resulting glyph. Failure to apply that transformation leads to outcomes such as the following.
 
 ![Miscomposed glyph "j"](/src/assets/images/blog/tiny-truetype-renderer/compound-glyph-no-transform-j.png)
-*This should be "j"*
+_This should be "j"_
 
 Right then, let's proceed to parse the compound glyph data. This is the trickiest part of the parser, but if you follow it step by step, you should be able to understand it!
 
@@ -691,6 +700,7 @@ Once the sequence is complete, pass it to the method that retrieves the GlyphCom
 Implementation. As compound glyphs are nested, using recursion should simplify matters.
 
 **Parser for compound glyphs (FontParser.cpp)**
+
 ```cpp
 std::vector<GlyphComponent> FontParser::getCompoundSubComponents(
     const uint16_t glyphCode,
@@ -797,7 +807,7 @@ Glyph FontParser::getCompoundGlyph() {
 This completes the bare minimum TrueType parser!
 
 ![Correctly compound glyph "j"](/src/assets/images/blog/tiny-truetype-renderer/compound-glyph-j.png)
-*"j" got its point back*
+_"j" got its point back_
 
 ## Renderer: Curve Rendering
 
@@ -822,6 +832,7 @@ If you have the time, I recommend reading the following online book.
 https://pomax.github.io/bezierinfo/index.html
 
 ### De Casteljau's algorithm
+
 Here, Bézier curves possess the welcome property that their control points can be obtained by repeatedly subdividing them at $t: t-1$. In essence, this means that linear interpolation (=lerp) need only be repeated for the degree of the curve. This is known as De Casteljau's algorithm.
 
 ![Animation of De Casteljau's algorithm](/src/assets/images/blog/tiny-truetype-renderer/Bezier_2_big.gif)
@@ -829,6 +840,7 @@ Here, Bézier curves possess the welcome property that their control points can 
 When written out as code, it looks like this.
 
 **Lerp for a segment and a quadratic Bézier curve (Geometry.h)**
+
 ```cpp
 inline glm::vec2 lerp(const glm::vec2& a, const glm::vec2& b, const float t) {
   assert(t >= 0 && t <= 1);
@@ -853,18 +865,19 @@ For the remainder of this section, we shall refer to the endpoints as $A$ and th
 Upon examining the rendering results, you may notice something amiss. There are instances where two or more $B$ points appear adjacent! Whilst this should not occur with quadratic Bézier curves, it arises because TrueType employs implicit endpoints. Specifically, quadratic Bézier curves are constructed through the following two patterns:
 
 - In the case of the sequence ‘$A$-$B$-$A$’, it simply forms a quadratic Bézier curve.
--  For a sequence where $B$-$B$ follows, assume that $A$ lies at the midpoint between the two $B$ points and construct a quadratic Bézier curve.
+- For a sequence where $B$-$B$ follows, assume that $A$ lies at the midpoint between the two $B$ points and construct a quadratic Bézier curve.
 
 Taking this into account, when two $B$ elements are placed side by side, the implicit endpoints are output in blue as follows. (For clarity, the outlines of the curved sections have been hidden.)
 
 ![show-implicit-on-curve](/src/assets/images/blog/tiny-truetype-renderer/show-implicit-on-curve.png)
 
 The endpoints and non-endpoints are indeed alternating along the curved sections! Right then, let's organise the flow for implementation based on the above.
+
 - The $A$ used in the previous description is kept outside the loop and updated after the description. ($\text{prev}A$)
 - If the point currently being viewed is $A$ and the next point is also $A$, then draw a straight line.
 - The point currently being viewed is $B$ and...
-    - If the next point on the glyph data is also $B$, prepare the next endpoint $A^\prime$ that is a midpoint of the two $B$s, and render the Bézier curve using $\text{prev}A$-$B$-$A^\prime$.
-    - If the next point on the glyph data is $A$, then render the Bézier curve of $\text{prev}A$-$B$-$A$.
+  - If the next point on the glyph data is also $B$, prepare the next endpoint $A^\prime$ that is a midpoint of the two $B$s, and render the Bézier curve using $\text{prev}A$-$B$-$A^\prime$.
+  - If the next point on the glyph data is $A$, then render the Bézier curve of $\text{prev}A$-$B$-$A$.
 
 Since it is good timing, let's prepare an affine transformation matrix for coordinate conversion here, so that the starting x-coordinate and the baseline of the glyph can also be easily passed. First, we shall create a matrix to flip the coordinate system about the x-axis, enabling us to adjust the baseline and glyph x-coordinates later.
 
@@ -890,6 +903,7 @@ $$
 Let's put it into code.
 
 **Glyph outline rendering with curves (FrameBufferCanvas.cpp)**
+
 ```cpp
 void FrameBufferCanvas::setGlyphBaseline(const int baseline) {
   transformMat[2][1] += baseline;
@@ -1030,6 +1044,7 @@ t &= \frac{(B_1 - A_1) \times V_2}{V_1 \times V_2}
 $$
 
 **Function to find a intersections of 2 segments (Geometry.h)**
+
 ```cpp
 inline std::optional<glm::vec2> segmentsIntersect(
     const glm::vec2& a1, const glm::vec2& a2,
@@ -1108,6 +1123,7 @@ $$
 Then solve this to find $t$ and check whether it lies within $0 \leq t \leq 1$. Incidentally, the eps that appears frequently is a small value used to tolerate floating-point errors.
 
 **Function to find a intersections of a segment and a quadratic Bezier curve (Geometry.h)**
+
 ```cpp
 inline std::vector<glm::vec2> segmentQuadBezierIntersect(
     const glm::vec2& p1, // bezier start
@@ -1146,6 +1162,7 @@ http://nishitalab.org/user/nis/cdrom/cad/CAGD90Curve.pdf
 Now that we have a function to find the intersection point, we shall proceed to implement the filling.
 
 **Glyph rendering with Even-odd rule (FrameBufferCanvas.cpp)**
+
 ```cpp
 void FrameBufferCanvas::renderGlyphByEvenOdd(const Glyph& glyph,
                                              const RGB color,
@@ -1263,7 +1280,6 @@ Strictly speaking, this method is not a perfect solution as it results in one pi
 
 Next, let's consider curves. Fundamentally, they are the same as straight lines, but we additionally consider the following patterns.
 
-
 - Count when the curve's endpoint lies below the scan line, but part of the curve lies above it.
 - When the endpoint of a curve lies above the scan line but part of the curve lies below it, ignore it.
 
@@ -1293,6 +1309,7 @@ $$
 Using this $t$ to verify the earlier condition will suffice!
 
 **Find a minimum curve of a quad Bézier curve (Geometry.h)**
+
 ```cpp
 inline int getBezierMinY(
     const glm::vec2& p1, // bezier start
@@ -1319,6 +1336,7 @@ inline int getBezierMinY(
 Finally, we check if the curve is concave downward. The condition is that when the scan line shares the same y-coordinate as one endpoint of the curve, the scan line and curve have two points of intersection, and if the curve is convex downward, we may safely ignore the count for the endpoint sharing the same y-coordinate as the scan line. This allowed us to fill it in neatly!
 
 **Fix the error caused on segment intersections (FrameBufferCanvas.cpp)**
+
 ```cpp
 void FrameBufferCanvas::renderGlyphByEvenOdd(const Glyph& glyph,
                                              const RGB color,
@@ -1435,6 +1453,7 @@ Let us implement it considering only line segments for now. Instead of counting 
 - Fill only the intervals where `isUpward` is greater than zero.
 
 **Considering line direction at intersection counting (FrameBufferCanvas.cpp)**
+
 ```cpp
 ...
 if (isOnCurve) {
@@ -1492,6 +1511,7 @@ Observing this diagram, you can see that the curve's convexity and the starting 
 It was a surprisingly simple check to cover this issue!
 
 **Fixing the counting error of Bézier curve (FrameBufferCanvas.cpp)**
+
 ```cpp
 void FrameBufferCanvas::renderGlyphByNonZero(const Glyph& glyph,
                                              const RGB color,
@@ -1616,6 +1636,7 @@ You can now display any string using your own TrueType parser and renderer. Well
 ![final-rendering-result](/src/assets/images/blog/tiny-truetype-renderer/result.png)
 
 ## Conclusion
+
 First of all, thank you for reading this lengthy article to the end! By loading each byte sequentially and starting with the rendering of a single pixel, I believe you've gained a broad understanding of what occurs in the world of fonts and 2D rendering—aspects we don't typically consciously consider.
 
 The parser and renderer created in this article possess only the bare minimal functionality, and TrueType fonts still hold many fascinating topics. For instance, hinting is a technique for fine-tuning glyph positions to improve readability in low-resolution environments. Other topics include kerning, ligatures, and vertical text are also quite interesting. Whilst performance wasn't a consideration in this project, there are entirely different algorithms for parallelising rendering using GPUs. If these pique your interest, I'd encourage you to build them yourself to gain a deeper understanding!
