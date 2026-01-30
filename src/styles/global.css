@@ -236,7 +236,9 @@ footer {
     background-color: var(--surface-container-lowest);
     overflow: hidden;
     border: 1px solid var(--outline);
-    transition: background-color 150ms ease, border-color 150ms ease,
+    transition:
+      background-color 150ms ease,
+      border-color 150ms ease,
       color 150ms ease;
     text-decoration: none !important;
     margin-top: var(--size-l);
@@ -297,6 +299,13 @@ footer {
     width: 100%;
     flex-shrink: 0;
     box-sizing: border-box;
+  }
+
+  code:not(pre code) {
+    background-color: var(--surface-container);
+    font-size: var(--text-code);
+    padding: 2px 4px;
+    border-radius: 4px;
   }
 
   .astro-code {

@@ -48,7 +48,8 @@
 }
 
 .tag {
-  padding: 0 var(--size-s) 2px;
+  font-size: var(--text-s);
+  padding: 2px var(--size-s) 0;
   border: 1px solid var(--outline);
   background: var(--surface-container-lowest);
   color: var(--on-surface-variant);
