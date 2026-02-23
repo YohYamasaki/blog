@@ -1,0 +1,469 @@
+---
+title: "Implementing Massively-Parallel Vector Graphics with WebGPU"
+description: "Learning how the tile-based vector graphics renderer works"
+pubDate: 2026-02-23
+updateDate: 2026-02-23
+tags: ["WebGPU", "Rust"]
+---
+
+The full implementation is available here:
+
+https://github.com/YohYamasaki/baby-parallel-vector-graphics
+
+The Japanese version of this article is available here:
+
+https://zenn.dev/yayo1/articles/0dbe7fcc59f790
+
+## Vector Graphics Rendering on the GPU
+
+The most basic approach to rendering vector graphics on the GPU is to tessellate the path interior into multiple triangles on the CPU side, then send the triangles to the GPU for rasterization. While this approach seems simple, tessellation can become a bottleneck, and preserving fill rules robustly (especially with self-intersections) complicates the pipeline.
+
+In contrast, the Stencil then Cover approach has widely used in production renderers. For example, Skia and Impeller use StC. In the Stencil phase, boundaries are drawn according to the fill rule, updating the stencil to build per-pixel inside/outside determination. Then in the Cover phase, a shape large enough to cover the path is used to render only the interior of the stencil. However, this approach is not perfect either, it requires two draw passes (Stencil → Cover), and overdraw occurs. It has also been reported that it tends to serialize per-path, making it difficult to fully utilize GPU performance in some scenes.
+
+The approach currently being researched and implemented is tile-based rendering. This method originates from [Random-access rendering of general vector graphics](https://hhoppe.com/proj/ravg/), and Nvidia has conducted similar research in [High-Performance Software Rasterization on GPUs](https://research.nvidia.com/sites/default/files/pubs/2011-08_High-Performance-Software-Rasterization/laine2011hpg_paper.pdf). Notable examples include Vello, Pathfinder, and Fuchsia’s Spinel renderer. Instead of relying on the GPU's hardware rasterizer, this approach uses compute shaders to perform rasterization. Specifically, the screen is divided into multiple tiles, GPU threads are launched for each tile, and the winding number is checked for each pixel. This method can reduce overdraw and expose more parallelism, depending on the scene composition.
+
+To learn how the tile-based renderer works, I have started implementing it following [Massively Parallel Vector Graphics](https://w3.impa.br/~diego/projects/GanEtAl14/), an improved and end-to-end version proposed by the authors of RAVG. The following provides an easier explanation of the tile subdivision sections of the MPVG paper, which I understand to be a crucial component of the renderers.
+
+## Overview of Parallel Subdivision of Tiles
+
+### The Benefits and Challenges of Tiling
+
+If we naively consider rendering without tiling, to determine whether a pixel should be filled, we would need to perform ray intersection tests against all segments of all paths in the scene. This is computationally infeasible as-is.
+
+By dividing the screen into tiles and cleverly gathering only the segments and information relevant to filling pixels within each tile, we can potentially greatly reduce the number of segments each pixel needs to examine.
+
+However, simply dividing the screen doesn't solve the inside/outside determination of paths. Since paths can cross tile boundaries, other segments of the same path outside the tile can affect the inside/outside determination within the tile. Therefore, to fill pixels in parallel on a tile basis, we need not only the segments touching the tile but also additional information to resolve this issue. This process, called Binning, is the key to tile-based rendering.
+
+## Segment Abstraction
+
+In tile-based renderers, the winding number check is ultimately performed per pixel. Specifically, a ray is cast from the current pixel infinitely to the right, and whether to fill the pixel is determined by the number of intersections between the ray and the segments composing the path. Thus, we compute intersections between rays and segments, but computing intersection positions from each segment's endpoints every time involves division and is inefficient.
+
+The paper speeds up intersection testing in two steps. The first is monotonization of segments. For example, a quadratic Bézier curve can intersect a ray up to twice, but simplifying this directly is difficult. So, to guarantee that a ray intersects only once, the segment is split into two monotonic segments. This enables the region-based determination used later.
+
+![Segment abstraction](/src/assets/images/blog/baby-mpvg/segment-abstraction.png)
+_Source: Francisco Ganacim et al., "Massively-Parallel Vector Graphics", Figure 2_
+
+The second step is pixel position determination through implicit function representation. Since the information needed for filling is not the intersection point but whether an intersection occurs, region-based determination is used. This means that a ray intersects a segment = the pixel is in the region to the left of the segment and within the segment's height range.
+
+![Sample position determination against a segment](/src/assets/images/blog/baby-mpvg/sample-position.png)
+_Source: Francisco Ganacim et al., "Massively-Parallel Vector Graphics", Figure 3_
+
+Since this implementation only handles straight line segments so far, monotonization is not needed, only the pixel region determination is implemented. Most 2D renderer APIs provide functions like `LineTo(x, y)`, which draw a straight line from the current position to the specified position. So we precompute the implicit function coefficients from the two endpoint coordinates and store them as fields. This allows the pixel region determination to be completed using only multiply-add operations.
+
+```rust
+pub struct AbstractLineSegment {
+    pub seg_type: u32,
+    pub path_idx: u32,
+    pub _pad0: [u32; 2],
+
+    pub bbox_ltrb: [f32; 4],
+
+    pub direction: u32,
+    // Coefficients for the implicit line equation ax + by + c = 0.
+    a: f32,
+    b: f32,
+    c: f32,
+    pub x0: f32,
+    pub y0: f32,
+    pub x1: f32,
+    pub y1: f32,
+}
+
+impl AbstractLineSegment {
+    pub fn new(p0: Point, p1: Point, seg_type: SegType, path_id: u32) -> Self {
+        let dir = Self::direction_svg(p1.x - p0.x, p1.y - p0.y);
+        let bounding_box = Self::line_bbox(&p0, &p1);
+        let mut a = p0.y - p1.y;
+        let mut b = p1.x - p0.x;
+        let mut c = p0.x * p1.y - p1.x * p0.y;
+
+        if a < 0.0 || (a == 0.0 && b < 0.0) {
+            a = -a;
+            b = -b;
+            c = -c;
+        }
+
+        AbstractLineSegment {
+            seg_type: seg_type.to_u32(),
+            direction: dir.to_u32(),
+            bbox_ltrb: bounding_box.to_ltrb(),
+            a,
+            b,
+            c,
+            _pad0: [0; 2],
+            path_idx: path_id,
+            x0: p0.x,
+            y0: p0.y,
+            x1: p1.x,
+            y1: p1.y,
+        }
+    }
+
+    #[inline(always)]
+    pub fn eval(&self, x: f32, y: f32) -> f32 {
+        self.a * x + self.b * y + self.c
+    }
+
+    #[inline(always)]
+    pub fn is_left(&self, x: f32, y: f32) -> bool {
+        self.eval(x, y) < 0.
+    }
+}
+```
+
+I will cover curves in a separate article once they are implemented.
+
+## Tile Subdivision
+
+The paper uses a quadtree for tile subdivision. Using a quadtree allows fast determination of which tile a pixel coordinate belongs to during rendering. It also makes it possible to skip unnecessary subdivision for tiles that don't need further splitting. For example, tiles that contain no segments.
+
+As mentioned earlier, when subdividing a tile into four children, simply storing the segments touching each child tile is not sufficient for inside/outside determination. The paper uses two concepts, Shortcut segments and Winding Increment, to enable inside/outside determination for each tile independently.
+
+### Shortcut Segments
+
+Consider a segment crossing the right boundary of a tile. Assuming the path is always closed, the destination of this segment falls into one of three categories:
+
+1. It crosses the same right boundary again and returns to the current tile
+2. It crosses the top boundary of some tile in the same row and returns to the current tile from the top, bottom, or left
+3. It crosses the bottom boundary of some tile in the same row and returns to the current tile from the top, bottom, or left
+
+![Examples of the shortcut segments](/src/assets/images/blog/baby-mpvg/shortcut.png)
+_Source: Francisco Ganacim et al., "Massively-Parallel Vector Graphics", Figure 6_
+
+From the perspective of the current tile, knowing which of these three categories a segment exiting through the right boundary falls into is sufficient for rendering, which means there is no need to know the actual behavior after leaving the tile. Therefore, as shown in the second column of the image above, the continuation of segments exiting through the right boundary can be replaced with simplified Shortcut segments for each category. This significantly reduces the number of segments needed for per-tile rendering.
+
+### Winding Increment (Per-Tile Winding Correction)
+
+However, if Shortcuts are created naively, we would need to trace the continuation segments until they eventually intersect either the tile's right boundary or the top/bottom boundary of a tile in the same row, which is still inefficient. Therefore, during tile subdivision, all Shortcut segments are initially created pointing upward regardless of category. This produces incorrect winding numbers for Case 3, so a Winding Increment is introduced as a correction value. If a segment crosses a line at the same height as the tile's bottom boundary to the right of the current tile, the corresponding tile's Winding Increment is incremented. This is equivalent to detecting Case 3.
+
+By using this as the initial value for the winding count during rendering of each tile, the correct winding number can ultimately be obtained. In the figure below, green lines are Shortcut segments and red lines are Winding Increments.
+
+![Example of winding increments](/src/assets/images/blog/baby-mpvg/winding-increment.png)
+_Source: Nehab and Hoppe, "Random-Access Rendering of General Vector Graphics", Figure 12_
+
+### GPU Subdivision Processing
+
+So far we've discussed how to subdivide into a form suitable for parallel rendering on the GPU, but the subdivision process itself also needs to run on the GPU. Paths are pre-converted into collections of lightweight structs containing only the information needed for subdivision. We call this data structure a segment entry. Segment entries are divided into Abstract entries, which are linked to actual segment instances, and Winc entries, which represent Winding Increments. In the figure below, `a` represents Abstract entries, `as` represents Abstract entries with Shortcuts, and numbers like `+1` represent Winc entries. The subdivision is performed using the following four kernels.
+
+![Steps of the parallel subdivision](/src/assets/images/blog/baby-mpvg/parallel-subdivision.png)
+_Source: Francisco Ganacim et al., "Massively-Parallel Vector Graphics", Figure 9;
+Note: The gray cell Offsets for 2BL in "Generate split entries,.." is likely a typo. It should be 0, not 1._
+
+#### Kernel 1
+Based on the parent's segment entries, segment entries plus additional information are saved into an intermediate representation (here called split entries) for each child tile. The particularly important determinations, like whether a Shortcut segment is needed and whether a Winding Increment occurs, are made here.
+
+#### Kernel 2
+Next, the prefix sum of Winding Increments is taken per child tile and per path. This cancels out Winc inherited from the parent tile and Winc generated during subdivision, preventing unnecessary Winc entries from being produced.
+
+#### Kernel 3
+Offsets are computed to determine storage indices in the buffer. By using an exclusive scan, entries where the Offset value changes can simply be output at the Offset position. If the last Winding Increment of each tile is non-zero, the Offset needs to be advanced by one to output a Winc entry.
+
+#### Kernel 4
+Output. Based on the SplitEntry and the previously computed offset positions, the post-subdivision segment entries are created.
+
+These operations are executed recursively until either a pre-specified maximum subdivision depth or minimum segment count is reached.
+
+### Implementation in WebGPU
+
+The challenging aspect of implementing this in wgpu is that Kernels 1–4 need to be executed recursively for subdivision.
+
+Since the subdivision result of each level is used as input for the next level, ping-pong buffers are needed to alternate between input and output. Simply overwriting a single buffer would cause read/write conflicts within the same dispatch, breaking correctness. By swapping the input and output buffers at each level, nothing needs to be read back except the final number of output segment entries.
+
+```rust
+pub fn build_quadtree(
+    root_bbox: Rect,
+    root_entries: Vec<SegEntry>,
+    max_depth: u8,
+    min_seg: usize,
+    abs_segments: &[AbstractLineSegment],
+) -> anyhow::Result<(Vec<CellMetadata>, Vec<SegEntry>)> {
+    let gpu_ctx = pollster::block_on(QuadTreeGpuContext::new(
+        &root_entries,
+        abs_segments,
+        &root_bbox,
+        max_depth,
+        min_seg as u32,
+    ))?;
+
+    let mut num_cells = 1u32;
+    let mut num_entries = root_entries.len() as u32;
+
+    for depth in 0..max_depth {
+        gpu_ctx.process_level(depth, num_cells, num_entries);
+
+        // Read back the actual output entry count; needed because the GPU emits a
+        // variable number of entries and the next dispatch must use the correct size.        let result_info = gpu_ctx.read_result_info()?;
+        num_entries = result_info.seg_entries_length;
+        num_cells *= 4;
+    }
+
+    let mut result_seg_entries = gpu_ctx.read_seg_entry()?;
+    // Last depth processed is max_depth - 1; pass it to select the correct ping-pong buffer.
+    let last_depth = max_depth - 1;
+    let cell_metadata = gpu_ctx.read_cell_metadata(last_depth)?;
+
+    // num_entries was updated to the final level's output count after the last readback.
+    result_seg_entries.truncate(num_entries as usize);
+    Ok((cell_metadata, result_seg_entries))
+}
+```
+
+Next, the prefix sums for Winding Increments and offsets need to be implemented from scratch. Unlike CUDA, which provides convenient primitives, the approach requires a multi-stage construction: creating partial sums via workgroup-level scans, writing block totals to a separate buffer, performing another scan on the totals, and finally adding the results back to each block. Furthermore, temporary buffers for scans and bind groups for each hierarchy level need to be prepared in advance, making the overall pipeline initialization relatively large.
+
+```rust
+// Build split entries
+pass.set_pipeline(&self.pipelines.build_split_entries);
+pass.set_bind_group(0, &self.bind_groups.split_seg_entry[ping], &[]);
+let [x, y, z] = dispatch_for_items(num_entries, max_dim);
+pass.dispatch_workgroups(x, y, z);
+
+let winding_bgs = &self.bind_groups.winding_scan_bgs;
+for i in 0..winding_levels.len() {
+    pass.set_pipeline(&self.pipelines.scan_winding_block);
+    pass.set_bind_group(0, &winding_bgs[i], &[]);
+    let [x, y, z] = dispatch_for_items(winding_levels[i], max_dim);
+    pass.dispatch_workgroups(x, y, z);
+}
+for i in (0..winding_levels.len().saturating_sub(1)).rev() {
+    pass.set_pipeline(&self.pipelines.add_winding_carry);
+    pass.set_bind_group(0, &winding_bgs[i], &[]);
+    let [x, y, z] = dispatch_for_items(winding_levels[i], max_dim);
+    pass.dispatch_workgroups(x, y, z);
+}
+```
+
+```wgsl
+@group(0) @binding(0) var<storage, read_write> seg_entries: array<SegEntry>;
+@group(0) @binding(1) var<storage, read_write> global_split_entries: array<SplitEntry>;
+@group(0) @binding(2) var<storage, read_write> global_cell_offsets: array<u32>;
+@group(0) @binding(3) var<storage, read_write> winding_infos_1: array<WindingBlockInfo>;
+@group(0) @binding(4) var<storage, read_write> winding_infos_2: array<WindingBlockInfo>; // per-block summaries
+// result_info[0].seg_entries_length holds the actual number of entries for the current depth.
+@group(0) @binding(5) var<storage, read_write> result_info: array<SplitResultInfo>;
+@group(0) @binding(6) var<storage, read_write> scan_params: array<ScanParams>;
+
+var<workgroup> wincs: array<WindingBlockInfo, 2>;
+
+@compute
+@workgroup_size(WG_SIZE)
+fn scan_winding_block(
+    @builtin(global_invocation_id) gid: vec3<u32>,
+    @builtin(local_invocation_id) lid: vec3<u32>,
+    @builtin(workgroup_id) wid: vec3<u32>,
+    @builtin(num_workgroups) num_wg: vec3<u32>,
+) {
+    let wg_linear = linearize_workgroup_id(wid, num_wg);
+    let idx = wg_linear * WG_SIZE + lid.x;
+    let entries_length = scan_params[0].level_len;
+    let carry_len = scan_params[0].carry_len;
+    let block_start = wg_linear * WG_SIZE;
+
+    var block_len = 0u;
+    if (block_start < entries_length) {
+        let remaining = entries_length - block_start;
+        block_len = min(WG_SIZE, remaining);
+    }
+
+    if (block_len == 0u) {
+        return;
+    }
+
+    let in_range = idx < entries_length;
+
+    if (in_range) {
+        wincs[lid.x] = winding_infos_1[idx];
+    } else {
+        wincs[lid.x] = neutral_winc();
+    }
+    workgroupBarrier();
+
+    inclusive_scan_winding_inc(lid.x);
+    workgroupBarrier();
+
+    if (lid.x == 0u && wg_linear < carry_len) {
+        let last_valid_idx = block_len - 1u;
+        var block_sum = WindingBlockInfo();
+        block_sum.first_path_idx = wincs[0].first_path_idx;
+        block_sum.last_path_idx = wincs[last_valid_idx].last_path_idx;
+        block_sum.first_cell_id = wincs[0].first_cell_id;
+        block_sum.last_cell_id = wincs[last_valid_idx].last_cell_id;
+        block_sum.tail_winding = wincs[last_valid_idx].tail_winding;
+        winding_infos_2[wg_linear] = block_sum;
+    }
+
+    if (in_range) {
+        winding_infos_1[idx] = wincs[lid.x];
+    }
+}
+
+@compute
+@workgroup_size(WG_SIZE)
+fn add_winding_carry(
+    @builtin(global_invocation_id) gid: vec3<u32>,
+    @builtin(local_invocation_id) lid: vec3<u32>,
+    @builtin(workgroup_id) wid: vec3<u32>,
+    @builtin(num_workgroups) num_wg: vec3<u32>,
+) {
+    let wg_linear = linearize_workgroup_id(wid, num_wg);
+    let idx = wg_linear * WG_SIZE + lid.x;
+    let entries_length = scan_params[0].level_len;
+    let in_range = idx < entries_length;
+
+    if (!in_range || wg_linear == 0u) {
+        return;
+    }
+
+    let carry_len = scan_params[0].carry_len;
+    let carry_idx = wg_linear - 1u;
+    if (carry_idx >= carry_len) {
+        return;
+    }
+
+    let carry = winding_infos_2[carry_idx];
+    var curr = winding_infos_1[idx];
+    let curr_is_single_group =
+        (curr.first_path_idx == curr.last_path_idx) &&
+        (curr.first_cell_id == curr.last_cell_id);
+    if (curr_is_single_group &&
+        carry.last_path_idx == curr.first_path_idx &&
+        carry.last_cell_id == curr.first_cell_id) {
+        curr.tail_winding += carry.tail_winding;
+    }
+    winding_infos_1[idx] = curr;
+}
+```
+
+Additionally, for offsets, the prefix sum needs to be taken across child tiles in the order TL → TR → BL → BR, without resetting at tile boundaries, over the split entries within each child tile. However, during the conversion from segment entries to split entries, the structure holds information about which child tile the entry is destined for within a single split entry, and the parent-child relationship of the data is reversed from the desired scan order, making it difficult to compute the prefix sum directly. Therefore, a separate buffer containing only the offsets for scanning is prepared, the prefix sum is computed there, and the results are written back to the split entries.
+
+```rust
+// 4 interleaved offset arrays, each of length max_split_entries.
+let cell_offsets_buffer = device.create_buffer(&BufferDescriptor {
+    label: Some("cell offsets buffer"),
+    size: check_storage_size(
+        "cell offsets buffer",
+        max_offsets
+            .checked_mul(size_of::<u32>() as u64)
+            .expect("cell offsets buffer size overflow")
+            .max(size_of::<u32>() as u64),
+    ),
+    usage: BufferUsages::STORAGE | BufferUsages::COPY_SRC | BufferUsages::COPY_DST,
+    mapped_at_creation: false,
+});
+```
+
+```wgsl
+/// Kernel 1 of 4.2 Parallel subdivision
+/// Assuming parent_entries already ordered SEGMENTs - WINDING for each cell.
+fn build_split_entries(idx: u32) {
+    // Read the actual entry count written by process_level() before this dispatch.
+    let n = result_info[0].seg_entries_length;
+    let entry = seg_entries[idx];
+    let metadata = cell_metadata[entry.cell_id];
+    let is_abstract_entry = (entry.entry_type & ABSTRACT) != 0;
+    let is_winding_inc_entry = (entry.entry_type & WINDING_INCREMENT) != 0;
+
+    if is_abstract_entry {
+        let seg_idx = entry.seg_idx;
+        let seg = segments[seg_idx];
+        let edge_info = get_edge_intersection_info(
+            seg,
+            metadata.bbox_ltrb,
+     metadata.mid[0],
+     metadata.mid[1]
+        );
+        let split_data = build_split_data(
+            seg,
+            entry.data,
+            edge_info,
+            metadata.bbox_ltrb,
+     metadata.mid[0],
+     metadata.mid[1]
+        );
+
+        // Add offsets (if a child cell intersects with the segment, add 1 to the offset)
+        global_cell_offsets[TOP_LEFT * n + idx] = has_fill(split_data.split_info, TOP_LEFT);
+        global_cell_offsets[TOP_RIGHT * n + idx] = has_fill(split_data.split_info, TOP_RIGHT);
+        global_cell_offsets[BOTTOM_LEFT * n + idx] = has_fill(split_data.split_info, BOTTOM_LEFT);
+        global_cell_offsets[BOTTOM_RIGHT * n + idx] = has_fill(split_data.split_info, BOTTOM_RIGHT);
+        ...
+	}
+}
+```
+
+```wgsl
+@group(0) @binding(0) var<storage, read_write> offsets_level_1: array<u32>;
+@group(0) @binding(1) var<storage, read_write> offsets_level_2: array<u32>;
+@group(0) @binding(2) var<storage, read_write> scan_params: array<ScanParams>;
+
+var<workgroup> block_offsets: array<u32, WG_SIZE>;
+
+@compute
+@workgroup_size(WG_SIZE)
+fn scan_offset_block(
+    @builtin(local_invocation_id) lid: vec3<u32>,
+    @builtin(workgroup_id) wid: vec3<u32>,
+    @builtin(num_workgroups) num_wg: vec3<u32>,
+) {
+    let wg_linear = linearize_workgroup_id(wid, num_wg);
+    let idx = wg_linear * WG_SIZE + lid.x;
+    let level_len = scan_params[0].level_len;
+    let carry_len = scan_params[0].carry_len;
+    let block_start = wg_linear * WG_SIZE;
+
+    var block_len = 0u;
+    if (block_start < level_len) {
+        block_len = min(WG_SIZE, level_len - block_start);
+    }
+    if (block_len == 0u) {
+        return;
+    }
+
+    if (idx < level_len) {
+        block_offsets[lid.x] = offsets_level_1[idx];
+    } else {
+        block_offsets[lid.x] = 0u;
+    }
+    workgroupBarrier();
+
+    inclusive_scan_block(lid.x);
+
+    if (idx < level_len) {
+        offsets_level_1[idx] = block_offsets[lid.x];
+    }
+
+    if (lid.x == 0u && wg_linear < carry_len) {
+        offsets_level_2[wg_linear] = block_offsets[block_len - 1u];
+    }
+}
+
+```
+
+### Other challenges
+
+WebGPU requires buffer sizes to be fixed at creation time and does not allow resizing afterward, in order to maintain abstraction guarantees. Therefore, if you want to change the size, you need to create a new buffer.
+
+Tile subdivision produces a variable number of segment entries depending on the input, making it difficult to predict the final count. This leaves roughly two options: (1) estimate a sufficiently large upper bound and allocate accordingly, or (2) read intermediate results back to the CPU to check the required amount and reallocate. However, option (2) is somewhat cumbersome to handle, and in Vello, another tile-based 2D renderer, there has been discussion that the read-back-and-reallocate-reexecute approach has synchronization issues.
+
+Therefore, in practice, the approach likely involves preparing multiple fixed buffers with some headroom and detecting overflow to expand them incrementally. (Though I haven't implemented that far in this project)
+
+Another subtle issue is WGSL code sharing. The subdivision process wants to reuse the same structs and helper functions across multiple kernels, but WGSL itself has no standard import mechanism. The quickest workaround is to concatenate strings on the CPU side into a single WGSL file, but then wgsl-analyzer stops working, which is painful. As potential solutions, there are WGSL extensions like the `#import` mechanism implemented by Bevy (which the analyzer partially supports) and WESL, but these haven't yet reached de facto standard status, making it hard to fully commit to them. For now, the practical approach seems to be giving up on IDE error display and running the analyzer on the concatenated file at build time for checking.
+
+## Conclusion
+
+While 2D renderers might appear to be a solved problem, it's fascinating to see new techniques being developed and implemented alongside the rise of compute shaders. Applications like GraphiteEditor already offer a Vello backend, and Pathfinder, the renderer for Servo, is also being actively developed with a tile-based approach.
+
+My own implementation is still at the stage where only the basics are complete, so I plan to keep working on it bit by bit until it can render reasonably general SVGs.
+
+---
+
+## References
+
+https://w3.impa.br/~diego/projects/GanEtAl14/
+
+https://hhoppe.com/proj/ravg/
+
+https://developer.download.nvidia.com/assets/gamedev/files/An_Introduction_to_NV_path_rendering.pdf
+
+https://www.visgraf.impa.br/Data/RefBib/PS_PDF/student-phd-2023-12-pedro-souza/tese-pedro.pdf
+
+https://github.com/linebender/vello/issues/366
