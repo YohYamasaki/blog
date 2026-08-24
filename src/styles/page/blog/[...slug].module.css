@@ -40,8 +40,8 @@
 }
 
 .titleWrap h1 {
-  margin-top: var(--size-s);
-  font-weight: 500;
+  margin-top: 0.5rem;
+  font-weight: 600;
   font-size: var(--text-xl);
 }
 
@@ -64,6 +64,12 @@
 
 .body {
   padding: var(--size-s);
+}
+
+.body video {
+  display: block;
+  width: 100%;
+  height: auto;
 }
 
 @media (min-width: 768px) {
