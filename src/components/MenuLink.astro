@@ -14,8 +14,8 @@ const { href, ...props } = Astro.props;
 
 const { pathname } = Astro.url;
 const subpath = pathname.match(/[^\/]+/g);
-const isActive =
-  href === removeLangFromContentPath(pathname) || href === "/" + subpath?.[0];
+const isActive = href === removeLangFromContentPath(pathname) ||
+  href === "/" + subpath?.[0];
 ---
 
 <Link {href} class:list={[s.link, { [s.active]: isActive }]} {...props}>

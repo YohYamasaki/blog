@@ -12,8 +12,10 @@ const notCurrentLang = currentLang === "en" ? "ja" : "en";
 ---
 
 <nav class={s.header}>
-  <Link class={s.title} href="/"
-    ><span class={s.icon} set:html={BirdIcon}></span>yayoi's blog
+  <Link class={s.title} href="/"><span
+      class={s.icon}
+      set:html={BirdIcon}
+    ></span>yayoi's blog
   </Link>
 
   <div class={s.links}>
@@ -35,7 +37,10 @@ const notCurrentLang = currentLang === "en" ? "ja" : "en";
         <a href={`/${notCurrentLang}`}>{LANGUAGES[notCurrentLang]}</a>
       </div>
       <div>
-        <span id="themeToggle" class={s.themeToggle} set:html={ThemeToggleSvg}
+        <span
+          id="themeToggle"
+          class={s.themeToggle}
+          set:html={ThemeToggleSvg}
         ></span>
       </div>
     </div>
@@ -45,16 +50,21 @@ const notCurrentLang = currentLang === "en" ? "ja" : "en";
 <script>
   const toggleEl = document.getElementById("themeToggle");
   function toggleTheme() {
-    const next =
-      document.body.getAttribute("data-theme") === "dark" ? "light" : "dark";
+    const next = document.body.getAttribute("data-theme") === "dark"
+      ? "light"
+      : "dark";
     document.body.setAttribute("data-theme", next);
     localStorage.setItem("theme", next);
   }
   toggleEl?.addEventListener("click", toggleTheme);
 
   function setPreferredTheme() {
-  const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-  document.body.setAttribute('data-theme', prefersDark ? 'dark' : 'light');
+    const prefersDark =
+      window.matchMedia("(prefers-color-scheme: dark)").matches;
+    document.body.setAttribute(
+      "data-theme",
+      prefersDark ? "dark" : "light",
+    );
   }
   setPreferredTheme();
 
@@ -62,7 +72,8 @@ const notCurrentLang = currentLang === "en" ? "ja" : "en";
   function toggleMenu() {
     const menuBtn = document.getElementById("menu-btn");
     const linkWrap = document.getElementById("linkWrap");
-    const expanded = menuBtn?.getAttribute("aria-expanded") === "true" || false;
+    const expanded = menuBtn?.getAttribute("aria-expanded") === "true" ||
+      false;
     menuBtn?.setAttribute("aria-expanded", !expanded + "");
     if (linkWrap) {
       linkWrap.style.display = expanded ? "none" : "flex";

@@ -150,15 +150,19 @@ _Source: Francisco Ganacim et al., "Massively-Parallel Vector Graphics", Figure 
 Note: The gray cell Offsets for 2BL in "Generate split entries,.." is likely a typo. It should be 0, not 1._
 
 #### Kernel 1
+
 Based on the parent's segment entries, segment entries plus additional information are saved into an intermediate representation (here called split entries) for each child tile. The particularly important determinations, like whether a Shortcut segment is needed and whether a Winding Increment occurs, are made here.
 
 #### Kernel 2
+
 Next, the prefix sum of Winding Increments is taken per child tile and per path. This cancels out Winc inherited from the parent tile and Winc generated during subdivision, preventing unnecessary Winc entries from being produced.
 
 #### Kernel 3
+
 Offsets are computed to determine storage indices in the buffer. By using an exclusive scan, entries where the Offset value changes can simply be output at the Offset position. If the last Winding Increment of each tile is non-zero, the Offset needs to be advanced by one to output a Winc entry.
 
 #### Kernel 4
+
 Output. Based on the SplitEntry and the previously computed offset positions, the post-subdivision segment entries are created.
 
 These operations are executed recursively until either a pre-specified maximum subdivision depth or minimum segment count is reached.
