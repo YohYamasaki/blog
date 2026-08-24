@@ -1,5 +1,6 @@
 // @ts-check
 import mdx from "@astrojs/mdx";
+import { unified } from "@astrojs/markdown-remark";
 import sitemap from "@astrojs/sitemap";
 import solidJs from "@astrojs/solid-js";
 import { defineConfig } from "astro/config";
@@ -10,14 +11,13 @@ import remarkLinkCard from "remark-link-card-plus";
 // https://astro.build/config
 export default defineConfig({
   site: "https://yayo1.com",
-  integrations: [
-    mdx({
+  integrations: [mdx(), sitemap(), solidJs()],
+  markdown: {
+    processor: unified({
       remarkPlugins: [remarkMath, remarkLinkCard],
-      rehypePlugins: [[rehypeKatex]],
+      rehypePlugins: [rehypeKatex],
     }),
-    sitemap(),
-    solidJs(),
-  ],
+  },
   trailingSlash: "never",
   build: {
     assets: "assets",

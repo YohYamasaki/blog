@@ -10,9 +10,10 @@ export const defaultLang = "en";
 /*
  * List of params for astro dynamic routing
  */
-export const langParams = Object.keys(LANGUAGES).map((lang) => ({
-  params: { lang: lang as Language },
-}));
+export const getLangParams = () =>
+  Object.keys(LANGUAGES).map((lang) => ({
+    params: { lang: lang as Language },
+  }));
 
 type TranslationKey =
   | "about.mainText"

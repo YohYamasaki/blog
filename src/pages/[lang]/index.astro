@@ -1,13 +1,13 @@
 ---
 import { getCollection } from "astro:content";
 import BlogCard from "../../components/BlogCard.astro";
-import { langParams } from "../../i18n/ui";
+import { getLangParams } from "../../i18n/ui";
 import BaseSite from "../../layouts/BaseSite.astro";
 import s from "../../styles/page/index.module.css";
 import { useTranslations } from "../../i18n/utils.ts";
 
 export async function getStaticPaths() {
-  return langParams;
+  return getLangParams();
 }
 
 const { lang } = Astro.params;
