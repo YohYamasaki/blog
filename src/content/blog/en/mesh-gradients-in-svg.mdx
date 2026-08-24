@@ -1,0 +1,535 @@
+---
+title: "Creating Mesh Gradients in Pure SVG"
+description: "Approximating Coons-patch mesh gradients with pure SVG 1.1 — no CSS or JavaScript"
+pubDate: 2026-08-24
+updatedDate: 2026-08-24
+tags: ["SVG", "Computer Graphics", "GSoC"]
+---
+
+This article explains part of my work as a Graphite contributor for Google Summer of Code 2026, focusing specifically on polyfilling mesh gradients in SVG 1.1.
+
+The approaches discussed in this article are implemented as an interactive demo below.
+
+<iframe
+  src="https://yayo1.com/demo/mesh-gradient-in-svg-1.1/"
+  title="Interactive mesh gradient rendering demo"
+  loading="lazy"
+  style="display: block; width: 100%; height: 700px; border: 1px solid var(--outline);"
+></iframe>
+
+https://yayo1.com/demo/mesh-gradient-in-svg-1.1/
+
+## What Is a Mesh Gradient?
+
+A mesh gradient is a type of gradient with freedom in two dimensions. Today, the term generally refers to one based on Coons patches bounded by cubic Bézier curves. The first specification to include them was probably PostScript Type 6 shadings. Many vector graphics editors, including Adobe Illustrator, also support creating mesh gradients.
+
+![Mesh gradient sample](/src/assets/images/blog/mesh-gradients-in-svg/mesh-gradient-sample.jpg)
+_Example of a mesh gradient_
+
+Outside the PostScript family, very few vector formats support rendering mesh gradients, so most graphics editors export them by embedding raster images. The same is true of SVG, the most widely used vector graphics format on the web. (SVG currently has no mesh gradient element, but there was an effort to add one in the past. It was included in SVG 2 drafts, but the working group deferred it to a future version because no browser implemented it.) That is a little sad because it loses the advantages of vector graphics, so I investigated and experimented with ways to approximate mesh gradients in SVG without simply embedding the whole thing as an image.
+
+## Rendering Mesh Gradients
+
+First, let's look at how mesh gradients are rendered in general. The major editors seem to follow the PostScript specification. A mesh consists of multiple patches, and each patch gets its shape from a bilinearly blended Coons patch, then fills it by interpolating the colors assigned to the four corners of a unit square along the $u$ and $v$ directions. Let's look at how the shape and color are calculated.
+
+### Coons Patches
+
+A Coons patch is a parametric surface defined by interpolating the region enclosed by four Bézier curves.
+
+![Coons patch](/src/assets/images/blog/mesh-gradients-in-svg/coons-patch.png)
+_Coons patch — Ag2gaeh / Wikimedia Commons / CC BY-SA 4.0_
+
+The interpolation is generally bilinear or bicubic. For placement in a two-dimensional space, as with PostScript mesh gradients, bilinear blending is the more common choice.
+Let the four curves, in top, bottom, left, and right order, be $c_0(u),\space c_1(u),\space d_0(v),\space d_1(v) \quad 0 \leq u, v \leq 1$. At the four corners, assume they connect such that $c_0(0) = d_0(0), \space c_0(1) = d_1(0), \space c_1(0) = d_0(1), \space c_1(1) = d_1(1)$.
+
+Linearly interpolating the top and bottom edges gives a ruled surface connecting $c_0(u)$ and $c_1(u)$ with straight lines. We do the same for the left and right edges.
+
+$$
+\begin{align*}
+L_c(u, v) &= (1-v)c_0(u) + vc_1(u) \\
+L_d(u, v) &= (1-u)d_0(v) + ud_1(v) \\
+\end{align*}
+$$
+
+Next, we bilinearly interpolate the four corner points as follows.
+
+$$
+\begin{align*}
+B(u, v) = (1-u)(1-v)c_0(0) + u(1-v)c_0(1) + (1-u)vc_1(0) + uvc_1(1)
+\end{align*}
+$$
+
+Combining the surfaces defined so far gives the Coons patch.
+
+$$
+C(u, v) = L_c(u, v) + L_d(u, v) - B(u, v)
+$$
+
+The rough idea is shown below: simply adding the two ruled surfaces counts part of the surface twice, so we subtract that overlap.
+
+![Bilinear Coons patch generation](/src/assets/images/blog/mesh-gradients-in-svg/bilinear-coons-patch-generation.png)
+_Bilinear Coons patch generation — Ag2gaeh / Wikimedia Commons / CC BY-SA 4.0_
+
+### Color Interpolation
+
+The interior is generally filled using either bilinear or bicubic interpolation. Since we are interpolating the four corner colors, Let's call the top-left, top-right, bottom-left, and bottom-right colors $TL,\space TR,\space BL,\space BR$.
+
+For bilinear interpolation, first define the parametric color functions for the top edge $T$ and bottom edge $B$ as $T(u) = (1 - u)TL + uTR$ and $B(u) = (1 - u)BL + uBR$. Then linearly blend them in the $v$ direction as $C(u, v) = (1-v)T(u) + vB(u)$.
+Linear interpolation is simple to calculate, but the color slope changes abruptly at patch boundaries. Even when the colors are C0-continuous at a boundary, the boundary remains visible as in the image below, which is not very attractive. The Mach band illusion also makes locations with abrupt changes in color slope stand out, emphasizing the patch boundaries even more.
+
+![Visible boundaries between bilinearly interpolated patches](/src/assets/images/blog/mesh-gradients-in-svg/bilinear-color-interpolation-boundaries.png)
+_Mesh gradient with bilinear color interpolation_
+
+Cubic Hermite interpolation is commonly used as another interpolation method to improve this. It is a parametric curve whose slope can be specified at the start and end. When joining multiple interpolations as we do here, using the same value and slope at each join gives C1 continuity.
+
+<video
+  controls
+  loop
+  muted
+  playsInline
+  preload="metadata"
+  aria-label="Cubic Hermite interpolation demonstration"
+>
+  <source
+    src="/videos/blog/mesh-gradients-in-svg/cubic-hermite-interpolation.mp4"
+    type="video/mp4"
+  />
+</video>
+
+Let the two points to interpolate be $A$ and $B$, with slopes $m_A$ and $m_B$. Hermite interpolation is calculated as follows.
+
+$$
+\begin{align*}
+h_1(t) &= 2t^3 - 3t^2 + 1 \\
+h_2(t) &= -2t^3 + 3t^2 \\
+h_3(t) &= t^3 - 2t^2 + t \\
+h_4(t) &= t^3 - t^2 \\ \\
+h(t) &= m_Ah_3(t) + Ah_1(t) + Bh_2(t) + m_Bh_4(t)
+\end{align*}
+$$
+
+In a Coons-patch mesh gradient, the color slopes at the four corners are not specified explicitly. A common approach is therefore to use finite differences to calculate a slope for each color channel from the distances between corners. Let the slope first obtained by finite differences be the color change per physical distance, $s=dC/d\ell$. The slope $m$ passed to cubic Hermite interpolation, on the other hand, is a derivative with respect to the normalized parameters $u,v\in[0,1]$. When using it for a patch, we therefore convert it by multiplying the slope per physical distance by the length of the corresponding edge. Overshoot is another possibility, so at extrema we set the gradient to zero and otherwise limit it using a weighted harmonic mean.
+
+For a mesh this becomes bicubic interpolation. Bicubic interpolation requires not only the slopes at the four corners, but also a mixed partial derivative, or twist, which controls how the slope in the $u$ direction changes while moving in the $v$ direction. Following the Smooth interpolation proposal that was considered for SVG 2, I set the twist to zero here.
+
+## Approximating It in SVG
+
+As mentioned above, SVG has no way to render a Coons patch directly, so let's look at how it can be approximated using the features currently available. As in PostScript, we will treat shape and color separately.
+
+### Shape Approximation
+
+#### First Attempt: Patch Subdivision
+
+The simplest method is to subdivide the patch. As a Coons patch is divided into smaller and smaller pieces, it approaches a collection of parallelograms. A parallelogram can be created from a square using an affine transformation, so it can be approximated with SVG `transform`. From here on, I will call the parallelograms produced by subdivision subpatches.
+![A Coons patch approximated with subdivided parallelograms](/src/assets/images/blog/mesh-gradients-in-svg/subdivided-coons-patch.png)
+_A Coons-patch approximated by parallelograms_
+
+The vertex positions of the subpatches are easy to calculate: just pass parameters corresponding to the subdivision count into the Coons patch equation. The problem is that as the shape becomes more complex, the required subpatches become smaller and more numerous. For example, displaying a 2×2 mesh gradient smoothly enough required thousands of subpatches. This is a common approach for rasterization, but in SVG, increasing the number of elements directly increases file size and slows rendering. Adaptive subdivision when the shape error exceeds a threshold can improve this somewhat, but in many situations it still does not seem very practical for SVG.
+
+#### Second Attempt: Displacement Maps
+
+The normal SVG transformation pipeline is limited to 2D affine transformations, but some filters can transform shapes. Internally, SVG filters rasterize the source graphic first and then processed pixel by pixel, making it possible to edit colors and shapes in ways that are difficult to do while keeping the data purely vector. One such filter is `feDisplacementMap`, which can distort a shape using a displacement map.
+
+![SVG displacement map example](/src/assets/images/blog/mesh-gradients-in-svg/displacement-map-example.png)
+_Displacement Map examples from the SVG test suite_
+
+The displacement performed by `feDisplacementMap` is calculated as follows.
+
+$$
+P'(x, y) = P(x + \text{scale} \times (XC(x, y) - 0.5), \space y + \text{scale} \times (YC(x, y) - 0.5))
+$$
+
+For each output pixel, this uses the displacement map to determine which input pixel should be sampled. In other words, it allows transformations with a great deal of freedom in two dimensions.
+
+One point to keep in mind when baking a displacement function into a map is that it is easier to handle if the function is injective. This is not strictly required, but because this is backward mapping, even if multiple locations in the input are displaced to the same output location, only one point can be stored in the map. A non-injective mapping therefore needs some kind of priority rule. The same issue occurs whenever a non-injective transformation is performed in two-dimensional space, so it is not a restriction specific to displacement maps. The PostScript specification explicitly gives priority to larger $u,v$ values, and many graphics editors implement the same behavior. The resulting behavior can be a little strange, though. In Affinity, as the example video shows in below, if moving the center corner of a 2×2 mesh creates a foldover, the rendered result changes in ways that do not look intuitively consistent depending on the center corner's position.
+
+<video
+  controls
+  loop
+  muted
+  playsInline
+  preload="metadata"
+  aria-label="Foldover behavior in Affinity"
+>
+  <source
+    src="/videos/blog/mesh-gradients-in-svg/affinity-foldover.mp4"
+    type="video/mp4"
+  />
+</video>
+
+For simplicity, I assume only injective transformations here. We therefore need the inverse mapping of the Coons patch. Since it is a bicubic polynomial, I solve it numerically using Newton's method.
+
+A displacement-map transformation only handles rectangle-to-rectangle mapping, so I use a color-interpolated square as the input and the patch's bounding box as the output area. The actual patch is not rectangular, so the result is clipped to finish it.
+
+![A mesh-gradient patch produced with a displacement map](/src/assets/images/blog/mesh-gradients-in-svg/displacement-map-result.jpg)
+
+## Approximating Color Interpolation
+
+Next is color interpolation. The only arbitrary color interpolation methods currently available in SVG are `<linearGradient>` and `<radialGradient>`. Our goal is to interpolate colors placed at the four corners of a square, so we will look at approximating this by combining `<linearGradient>` elements.
+
+### Bilinear Interpolation
+
+This one is simple. Create two linear gradients in the $u$ direction, one between the colors on the top edge and one between the colors on the bottom edge, then blend them with a single linear-gradient alpha mask in the $v$ direction. The SVG structure should be like below.
+
+```xml
+<g>
+  <rect fill="Top"/>
+  <rect fill="Bottom" mask="Vertical"/>
+</g>
+```
+
+![Bilinear interpolation assembled from SVG gradients](/src/assets/images/blog/mesh-gradients-in-svg/bilinear-interpolation.png)
+_Bilinear interpolation assembled from SVG gradients_
+
+If we graph each layer's contribution on the vertical axis and $v$ on the horizontal axis, it looks like this. It makes the linear blend between the two layers easy to see.
+
+![Layer contributions in bilinear interpolation](/src/assets/images/blog/mesh-gradients-in-svg/bilinear-layer-contributions.png)
+_Layer contributions in bilinear interpolation_
+
+### Bicubic Interpolation
+
+This is the main part. Let's start in one dimension. A free-form easing function cannot be passed to `<linearGradient>`, so we approximate it with a polyline made from multiple stops. More specifically, sample each interval between stops at a sufficiently fine spacing, linearly interpolate it, and recursively subdivide until every error against the function being approximated falls below the threshold.
+
+For bicubic interpolation, this does not mean that we can create a similar vertical alpha mask and simply composite two layers. The color change in the $v$ direction at a particular $u$ depends not only on the colors at the top and bottom edges, but also on the $v$-direction slopes at that $u$. The basic idea of polyline approximation stays the same, but we move up one dimension and reproduce it by stacking multiple gradient layers.
+More specifically, between $v_{\text{start}}$ and $v_{\text{end}}$, we subdivide until the error between linear and cubic interpolation in the $v$ direction stays below the threshold at every sufficiently densely sampled $u$ position. At render time, we create $u$-direction gradients at $v_i$ and $v_{i+1}$ and blend them using a linear-gradient alpha mask in the $v$ direction.
+
+![Gradient layers used to approximate bicubic interpolation](/src/assets/images/blog/mesh-gradients-in-svg/bicubic-gradient-layers.png)
+_Gradient layers used to approximate bicubic interpolation_
+
+You can see that this approximates the result by repeatedly applying bilinear interpolation.
+
+![Bicubic interpolation approximated by repeated bilinear interpolation](/src/assets/images/blog/mesh-gradients-in-svg/bicubic-bilinear-approximation.png)
+_Bicubic interpolation approximated by repeated bilinear interpolation_
+
+### Bicubic Interpolation in Gamma-Encoded sRGB
+
+This is the most interesting finding from this experiment. When the interpolation color space is gamma-encoded sRGB, we can approximate it using far fewer alpha masks than the polyline approximation in the $v$ direction. This method only works when the interpolation space matches the space in which the SVG renderer performs alpha blending.
+
+As a preliminary point, Source over compositing of opaque colors is a convex combination. More specifically, when an opaque source color $C_s$ is composited over an opaque backdrop color $C_b$ with opacity $\alpha$, the result $C_{\text{out}}$ is calculated as follows.
+
+$$
+C_{\text{out}}=\alpha C_s+(1-\alpha)C_b
+$$
+
+A cubic Hermite curve can also be represented as a cubic Bézier curve. Bézier control points are positions rather than derivatives, so no slope need to be handled, and importantly, this is also a convex combination. We can use these properties to reproduce bicubic interpolation.
+
+For a cubic Bézier curve $\mathbf{C}(u)$ in Bernstein form, let $i \in \{0,1,2,3\}, \space 0\leq u \leq1$, let $B_i(u)$ be the Bernstein basis functions, and let $\mathbf{P}_i$ be the control points. Then:
+
+$$
+\begin{align*}
+B_0(u)&=(1−u)^3 \\
+B_1(u)&=3u(1−u)^2 \\
+B_2(u)&=3u^2(1−u) \\
+B_3(u)&=u^3 \\
+\\
+\mathbf{C}(u)
+&= \sum_{i=0}^{3} B_{i}(u)\mathbf{P}_i \\
+\end{align*}
+$$
+
+A bicubic Bézier surface $\mathbf{S}(u, v)$ can then be expressed using 4×4 control points $\mathbf{P}_{ji}$. In the control-point matrix $P$, row index $j$ corresponds to the vertical $v$ direction, and column index $i$ corresponds to the horizontal $u$ direction.
+
+$$
+\begin{align*}
+\mathbf{S}(u,v)
+&= \sum_{j=0}^{3}\sum_{i=0}^{3}
+B_j(v)B_i(u)\mathbf{P}_{ji}
+\end{align*}
+$$
+
+We can view this as four cubic Bézier curves in the $u$ direction, combined convexly using the Bernstein basis as weights. To make it easier to read, let the curves in the $u$ direction be $Q_j(u) = \sum^{3}_{i=0}B_i(u)P_{ji}$. Then:
+
+$$
+\begin{align*}
+\mathbf{S}(u,v)
+&= \sum_{j=0}^{3} B_j(v) Q_j(u)
+\end{align*}
+$$
+
+This is starting to look like something Source over compositing can reproduce. More specifically, we can output each $Q_j(u)$ as a linear gradient in the $u$ direction, apply $B_j(v)$ as a linear-gradient alpha mask in the $v$ direction, and Source-over composite a total of four layers.
+
+Let's pause and look at the structure at this point. The SVG will be assembled as follows. The contribution of each layer is affected by the repeated Source over operations, so we need to bake compensation for that effect into $B_j(v)$.
+
+```
+<g>
+  <rect fill="Q3"/>
+  <rect fill="Q2" mask="B2"/>
+  <rect fill="Q1" mask="B1"/>
+  <rect fill="Q0" mask="B0"/>
+</g>
+```
+
+The coefficients of each $Q_i(u)$ produced by the alpha masks can therefore be expanded as follows.
+
+$$
+\begin{aligned}
+C_{\mathrm{out}_0}(u,v)
+&= \alpha_0(v)Q_0(u)
+ +(1-\alpha_0(v))C_{\mathrm{out}_1}(u,v) \\[4pt]
+&= \alpha_0(v)Q_0(u)
+ +(1-\alpha_0(v))
+ \left[
+   \alpha_1(v)Q_1(u)
+   +(1-\alpha_1(v))C_{\mathrm{out}_2}(u,v)
+ \right] \\[4pt]
+&= \alpha_0(v)Q_0(u)
+ +(1-\alpha_0(v))\alpha_1(v)Q_1(u) \\
+&\quad +(1-\alpha_0(v))(1-\alpha_1(v))
+ \left[
+   \alpha_2(v)Q_2(u)
+   +(1-\alpha_2(v))Q_3(u)
+ \right] \\[4pt]
+&= \alpha_0(v)Q_0(u) \\
+&\quad +(1-\alpha_0(v))\alpha_1(v)Q_1(u) \\
+&\quad +(1-\alpha_0(v))(1-\alpha_1(v))
+          \alpha_2(v)Q_2(u) \\
+&\quad +(1-\alpha_0(v))(1-\alpha_1(v))
+          (1-\alpha_2(v))Q_3(u)
+\end{aligned}
+$$
+
+The color of the bicubic Bézier surface, on the other hand, is given by the earlier equation:
+
+$$
+\begin{equation*}
+C(u,v)=
+B_0(v)Q_0(u)
++B_1(v)Q_1(u)
++B_2(v)Q_2(u)
++B_3(v)Q_3(u)
+\end{equation*}
+$$
+
+Comparing the coefficients of each $Q_i(u)$ gives:
+
+$$
+\begin{align*}
+B_0(v)
+&= \alpha_0(v) \\
+
+B_1(v)
+&= (1-\alpha_0(v))\alpha_1(v) \\
+
+B_2(v)
+&= (1-\alpha_0(v))(1-\alpha_1(v))\alpha_2(v) \\
+
+B_3(v)
+&= (1-\alpha_0(v))(1-\alpha_1(v))(1-\alpha_2(v))
+\end{align*}
+$$
+
+Solving these for each $\alpha_i(v)$ gives:
+
+$$
+\begin{align*}
+\alpha_0(v)
+&= B_0(v) \\
+
+\alpha_1(v)
+&= \frac{B_1(v)}
+        {B_1(v)+B_2(v)+B_3(v)} \\
+
+\alpha_2(v)
+&= \frac{B_2(v)}
+        {B_2(v)+B_3(v)}
+\end{align*}
+$$
+
+Substituting the Bernstein basis functions and simplifying gives:
+
+$$
+\begin{align*}
+\alpha_0(v)
+&= (1-v)^3 \\
+
+\alpha_1(v)
+&= \frac{3(1-v)^2}{v^2-3v+3} \\
+
+\alpha_2(v)
+&= \frac{3(1-v)}{3-2v}
+\end{align*}
+$$
+
+These curves can be baked into alpha masks using gradients in the $v$ direction.
+
+The $B_j(v)$ baked into the $v$-direction alpha masks do not require any control-point information, or in other words, any of the colors actually assigned to the patch. They are simply the Bernstein basis functions with compensation for the Source over operations added. This means that the same masks can be reused across multiple patches.
+
+All that remains is to fill the four $u$-direction gradients with the results of $Q_j(u) = \sum^{3}_{i=0}B_i(u)\mathbf{P}_{ji}$. To do that, we first need the control points of the bicubic Bézier surface. For a cubic Hermite curve whose start and end values and slopes are $(p_0, \space m_0) \space (p_1, \space m_1)$, the corresponding cubic Bézier control points are:
+
+$$
+\begin{bmatrix} b_0\\ b_1\\ b_2 \\ b_3 \end{bmatrix} = \begin{bmatrix} p_0\\ p_0 +\frac{m_0}{3}\\ p_1 -\frac{m_1}{3}\\ p_1 \end{bmatrix}
+$$
+
+Let the four corner colors be $c_{TL}, c_{TR}, c_{BL}, c_{BR}$, the slopes in the $u$ direction be $m_{u,TL}, m_{u,TR}, m_{u,BL}, m_{u,BR}$, and the slopes in the $v$ direction be $m_{v,TL}, m_{v,TR}, m_{v,BL}, m_{v,BR}$. We then define the transformation matrix $T$ and the matrix $H$ containing the patch values and slopes as follows. As mentioned earlier, the twists are zero.
+
+$$
+\begin{align*}
+T &= \begin{bmatrix}
+1 & 0 & 0 & 0 \\
+1 & \frac13 & 0 & 0 \\
+0 & 0 & 1 & -\frac13 \\
+0 & 0 & 1 & 0
+\end{bmatrix} \\\\
+H &= \begin{bmatrix}
+c_{TL} & m_{u,TL} & c_{TR} & m_{u,TR} \\
+m_{v,TL} & 0 & m_{v,TR} & 0 \\
+c_{BL} & m_{u,BL} & c_{BR} & m_{u,BR} \\
+m_{v,BL} & 0 & m_{v,BR} & 0 \\
+\end{bmatrix}
+\end{align*}
+$$
+
+Using these, the control-point matrix $P$ of the bicubic Bézier surface is:
+
+$$
+P = THT^{\top}
+$$
+
+Finally, create four gradients in the $u$ direction according to $Q_j(u) = \sum^{3}_{i=0}B_i(u)\mathbf{P}_{ji}$, and we are done!
+
+![Bicubic interpolation produced with Bernstein layers](/src/assets/images/blog/mesh-gradients-in-svg/bicubic-bernstein-result.png)
+_Bicubic interpolation produced with Bernstein layers_
+
+With the Source over weighting included, the contribution of each layer looks like this:
+
+![Layer contributions including Source over weighting](/src/assets/images/blog/mesh-gradients-in-svg/source-over-layer-contributions.png)
+_Layer contributions including Source over weighting_
+
+With the Source over weighting removed, it looks like this. The layers are blended exactly according to the definition of a cubic Bézier curve.
+
+![Layer contributions without Source over weighting](/src/assets/images/blog/mesh-gradients-in-svg/bernstein-layer-contributions.png)
+_Layer contributions without Source over weighting_
+
+## Adjustments for Practical Use
+
+In theory, then, a Coons-patch mesh gradient can be built from SVG 1.1 features alone. In practice, though, some tuning is needed to work with the specification and its constraints.
+
+### Per-Corner Alpha
+
+The method described above for approximating bicubic interpolation by compositing gradients relies on Source over compositing of opaque colors being a convex combination. It therefore breaks if the corner colors are simply made translucent.
+To reproduce the alpha behavior of each corner color, I place an alpha-only mesh gradient with the same shape over a mesh made only from opaque colors and use it as an alpha mask. In the current implementation, this means the output SVG becomes slightly larger whenever even one corner has an opacity value other than 1.
+
+### Gaps Between Patches
+
+A mesh gradient is made by connecting multiple patches. But if perfectly sized elements are simply placed next to each other in SVG, the background can show through between them.
+
+![Antialiasing gaps between adjacent mesh-gradient patches](/src/assets/images/blog/mesh-gradients-in-svg/gaps-between-patches.png)
+
+This happens because SVG elements are rasterized individually, with antialiasing also applied individually. Let the two sides of a boundary be $A$ and $B$. If $A$ is antialiased first to $\alpha=0.5$, then $B$ with $\alpha=0.5$ is placed over it, the backdrop contribution becomes $(1-0.5)(1-0.5)=0.25$, producing a gap. One way to avoid this is to enlarge each patch slightly so that they overlap. We want to expand the patch uniformly along the outward normals of its boundary, and the `stroke` attribute provides a convenient shortcut for doing that.
+
+The displacement map passed to `feDisplacementMap` needs a similar expansion. If the map is generated at exactly the same size as the patch's bounding box, a calculation error or interpolation during rendering may cause it to sample even one pixel outside the input area. That output is undefined and becomes transparent, which can produce gaps like the one below.
+
+![A gap caused by sampling outside a displacement map](/src/assets/images/blog/mesh-gradients-in-svg/displacement-map-edge-gap.png)
+_A gap caused by sampling outside a displacement map_
+
+This can be improved by expanding the input area, filter region, and mask region together by a small amount.
+
+The patch area inside the displacement map also needs a small buffer. As described above, the output patch is expanded beyond its actual size, so displacement values are needed for the protruding part as well. The renderer scales the displacement map to match its displayed size. If displacement data exists only up to the exact patch boundary, interpolation while scaling the map image may blend it with displacement data outside the patch, applying an incorrect displacement near the boundary. To prevent these problems, the patch area inside the map is also expanded when generating the displacement map. The next section explains the specific method.
+
+### Generating the Displacement Map
+
+In this article, the map passed to `feDisplacementMap` is numerically calculated to obtain the parameter coordinates $(u,v)$ corresponding to each rendered position $(x,y)$. To increase the chance of getting the correct value, I first sample the patch coarsely at about 8×8, precompute and cache where points in the input square map onto the patch, then choose the sample closest to the target coordinate as the initial value for Newton's method. We can also assume that a patch is generally continuous, so the inverse mapping for the current $(x,y)$ is likely not far from the result at a neighboring pixel. Once a plausible inverse mapping inside the patch is found using the method above, I use that pixel as the starting point for a BFS, improving the chance of reaching the correct result quickly.
+
+The patch-size buffer mentioned in the previous section consists of locations where either or both Coons-patch parameters $u,v$ fall outside $[0,1]$. An inverse mapping is therefore less likely to be found there than inside the patch. To avoid starting a BFS from an incorrect result found in the buffer and carrying it into the patch interior, the interior is processed first, then build the buffer outward from those interior results. If no inverse mapping is found, take a copy of the color from the boundary inside the patch instead, preventing a large color shift.
+
+The displacement map passed to `feDisplacementMap` must be rectangular, so I use the Coons patch's bounding box as the map shape. Pixels still farther outside than the buffer within this bounding box will ultimately be clipped, so their displacement is set to nothing to keep them from affecting the calculation of the `scale` attribute.
+
+### Removing Affine Transformations from the Displacement Map
+
+Because displacement data is stored in the color channels of the map image, it is quantized to 8 bits. On its own, this would make 256 in the output size the maximum displacement value, so the `scale` attribute is used to set the data's magnification factor. As a result, the larger the range of displacement values handled by the map, the larger the required scale. This also widens each step after the displacement data is quantized. The example below sets a large scale for the top-left patch, producing banding.
+
+![Banding caused by a large displacement-map scale](/src/assets/images/blog/mesh-gradients-in-svg/displacement-map-banding.png)
+_Banding caused by a large displacement-map scale_
+
+To minimize this effect, separating any part of the Coons-patch deformation that can be represented by an affine transformation works, since it leaves only the remaining non-affine deformation in the displacement map.
+
+### Detecting and Preventing Foldovers
+
+As mentioned earlier, foldovers in a patch often produce strange behavior. To keep users from creating them, I experimented with detecting foldovers and constraining movement so they cannot occur.
+
+A foldover can be detected using the Jacobian. If the Jacobian has a consistent sign across the entire patch, there is no local foldover. A separate test is needed when the whole patch overlaps itself while keeping the same orientation. As an experiment in preventing foldovers, I sample the Jacobian over the entire patch after moving a corner. If a foldover occurs, the corner is allowed to move only as far as the edge of the valid region.
+
+<video
+  controls
+  loop
+  muted
+  playsInline
+  preload="metadata"
+  aria-label="Constraining a mesh corner to prevent foldovers"
+>
+  <source
+    src="/videos/blog/mesh-gradients-in-svg/foldover-prevention.mp4"
+    type="video/mp4"
+  />
+</video>
+
+Sampling alone gives only a coarse estimate of the boundary, so here I use binary search along the line connecting the center of the valid region's bounding box to the mouse position. I chose the bounding-box center as the reference for UX reasons. Using the pre-drag position as the center of the binary search looks reasonable at first, but the behavior feels odd. For example, if a corner is already near the edge of the valid region before dragging, the midpoint moves back toward the original position as the mouse moves farther beyond the boundary, like below.
+
+<video
+  controls
+  loop
+  muted
+  playsInline
+  preload="metadata"
+  aria-label="Foldover prevention using the pre-drag position as a reference"
+>
+  <source
+    src="/videos/blog/mesh-gradients-in-svg/foldover-prevention-reference-point.mp4"
+    type="video/mp4"
+  />
+</video>
+Intuitively, when movement is constrained by something, people probably expect
+the point to move to the boundary location closest to where they actually wanted
+it to go. This is only a simple implementation, so there may be a better way.
+
+## Various Things Still to Investigate
+
+### Color Errors Can Appear with the Bernstein Layer Method
+
+Looking only at the calculations, bicubic interpolation using the Bernstein layer method should not produce a lot of error. In practice, however, slight color fluctuations can sometimes be seen inside a patch. My guess is that errors accumulate over the three Source over operations and drift when rounded to 8 bits. One could perhaps anticipate where the error accumulates and compensate for it, though the implementation would be involved.
+
+### Improving Precision with Multiple Patches
+
+With `feDisplacementMap`, reference-position error grows proportionally as the final output size of a patch increases. If every affine component could be separated, the maximum `feDisplacementMap` scale should end up somewhere around 2. For example, with a final patch size of 256×256 px, one step would be roughly 2 px; at 1024×1024 px, it would be 8 px. In an area where the color changes sharply, this error may become visible as banding. One way to avoid this should be to use more `feDisplacementMap` elements per patch. Ideally, the implementation could dynamically subdivide only areas where the range of color change makes banding likely. Dividing the areas handled by each displacement map well might also make it possible to reduce the map resolution.
+
+### Reproducing UV Priority with DisplacementMap
+
+This implementation calculates the inverse mapping of a Coons patch with Newton's method without accounting for foldovers. To match the PostScript specification, locations with larger UV values should be rendered last. This seems difficult when solving the inverse mapping directly, so I would like to find a way to reflect forward-mapping results in the displacement map. One possible approach might be to start with fairly dense forward samples, then fill the remaining holes using inverse mapping.
+
+### Cross-Browser Differences in `feDisplacementMap`
+
+During these experiments, I found several behaviors around `feDisplacementMap` that appear to be implementation bugs in Firefox and Chromium. Safari also seems to have fixed related bugs in the first half of 2026. Overall, there are noticeable differences between browsers, so a production implementation would need to absorb them somehow.
+
+### Improving Bicubic Approximation with Polylines
+
+When bicubic interpolation is approximated with polylines and the corner colors differ extremely, several times more stops are required than with pastel colors. That is unavoidable with this method, but the Bernstein layer method cannot be used when interpolation is specified in a color space other than gamma-encoded sRGB, such as OKLab, which makes this difficult. There may be room for a better approach.
+
+### Dithering
+
+As discussed throughout this article, banding can arise for several reasons. It seems worth investigating whether dithering can hide it effectively. Even with the rasterization method, JPEG output tends to show less obvious banding than PNG output. Simply stacking `feTurbulence` or `feGaussianBlur` without much thought did not work well, though, so this seems to need proper consideration.
+
+## Closing
+
+After spending a solid month looking into mesh gradients, I finally feel like I am starting to understand how they work. I would like to investigate further whether the combination of `feDisplacementMap` deformation and Bernstein-layer color interpolation can reach the same visual quality as simply dropping in a raster image. The displacement-map method comes with some filter-specific constraints, but it still retains a good deal of the benefit of being SVG.
+
+After the SVG polyfill, tessellation and rendering with compute shaders also look interesting. Once that work has taken shape, I may write another article about it.
+
+---
+
+## References
+
+https://www.adobe.com/jp/print/postscript/pdfs/PLRM.pdf
+
+https://www.w3.org/TR/2015/WD-SVG2-20150709/pservers.html#MeshGradients
+
+https://developer.mozilla.org/en-US/docs/Web/SVG/Reference/Element/feDisplacementMap
+
+http://tavmjong.free.fr/blog/?p=316
+
+http://tavmjong.free.fr/blog/?p=1554
+
+https://en.wikipedia.org/wiki/Coons_patch
+
+https://www.chrismitchell.name/articles/fix-svg-color-bleed/
+
+https://www.mdpi.com/2297-8747/30/2/30
