@@ -25,14 +25,14 @@ type Translation = Record<TranslationKey, string>;
 export const translations: Record<Language, Translation> = {
   en: {
     "about.mainText":
-      "I am a software engineer and a computer science student based in Germany with a keen interest in the intersection of web technology and 2D graphics.",
+      "I am a software engineer and a computer science student based in Kyoto with a keen interest in vector graphics and parallel computing.",
     "blogIndex.title": "Blog",
     "blogIndex.description":
       "Here are some of my miscellaneous articles about software",
   },
   ja: {
     "about.mainText":
-      "ドイツでWEBエンジニアをしています。パートタイムのコンピューターサイエンス学生でもある。2DグラフィックスとWEB技術に興味があります。",
+      "ドイツでWEBエンジニアをしていて2026年現在京都在住。パートタイムのコンピューターサイエンス学生でもある。ベクターグラフィックスとGPUでの並列処理に興味があります。",
     "blogIndex.title": "ブログ",
     "blogIndex.description":
       "主にUniversity of London Computer Science BScのことなどの雑記",
