@@ -4,6 +4,7 @@ import s from "../../../styles/page/blog/[...slug].module.css";
 import { type CollectionEntry, getCollection, render } from "astro:content";
 import DynamicPicture from "../../../components/common/DynamicPicture.astro";
 import FormattedDate from "../../../components/FormattedDate.astro";
+import TagLink from "../../../components/TagLink.astro";
 import BaseSite from "../../../layouts/BaseSite.astro";
 import {
   getLangPathFromContentId,
@@ -35,8 +36,13 @@ const headProps = {
   <article id="blog-post" class={s.post}>
     <hgroup class={s.hgroup}>
       <span class={s.titleWrap}>
-        <span class={s.date}>
-          <FormattedDate date={post.data.pubDate} />
+        <span class={s.meta}>
+          <span class={s.date}>
+            <FormattedDate date={post.data.pubDate} />
+          </span>
+          <span class={s.tagWrap}>
+            {post.data.tags?.map((tag) => <TagLink {tag} />)}
+          </span>
         </span>
         <h1 class={s.title}>{post.data.title}</h1>
         <p>{post.data.description}</p>

@@ -1,0 +1,13 @@
+---
+import s from "../styles/components/TagLink.module.css";
+import { tagToSlug } from "../utils/tagUtils";
+import Link from "./common/Link.astro";
+
+type Props = {
+  tag: string;
+};
+
+const { tag } = Astro.props;
+---
+
+<Link class={s.tag} href={`/tags/${tagToSlug(tag)}`}>{tag}</Link>

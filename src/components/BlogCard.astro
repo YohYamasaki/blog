@@ -2,6 +2,7 @@
 import { type CollectionEntry } from "astro:content";
 import s from "../styles/components/BlogCard.module.css";
 import FormattedDate from "./FormattedDate.astro";
+import TagLink from "./TagLink.astro";
 
 type Props = {
   post: CollectionEntry<"blog">;
@@ -12,18 +13,21 @@ const { lang } = Astro.params;
 ---
 
 <div class={s.blogCard}>
-  <a href={`/${lang}/blog/${post.id.replace(`${lang}/`, "")}`}>
-    <div class={s.body}>
-      <div class={s.meta}>
-        <span class={s.tagWrap}>
-          {post.data.tags?.map((tag) => <span class={s.tag}>{tag}</span>)}
-        </span>
-        <span class={s.date}>
-          <FormattedDate date={post.data.pubDate} />
-        </span>
-      </div>
+  <div class={s.body}>
+    <div class={s.meta}>
+      <span class={s.tagWrap}>
+        {post.data.tags?.map((tag) => <TagLink {tag} />)}
+      </span>
+      <span class={s.date}>
+        <FormattedDate date={post.data.pubDate} />
+      </span>
+    </div>
+    <a
+      class={s.postLink}
+      href={`/${lang}/blog/${post.id.replace(`${lang}/`, "")}`}
+    >
       <h2 class={s.title}>{post.data.title}</h2>
       <p class={s.desc}>{post.data.description}</p>
-    </div>
-  </a>
+    </a>
+  </div>
 </div>

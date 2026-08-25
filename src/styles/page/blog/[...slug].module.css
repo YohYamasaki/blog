@@ -29,6 +29,20 @@
   font-size: var(--text-s);
 }
 
+.meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--size-s);
+}
+
+.tagWrap {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
 .headImage {
   display: block;
 }

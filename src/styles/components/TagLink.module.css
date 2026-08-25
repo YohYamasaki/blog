@@ -1,0 +1,17 @@
+.tag {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px var(--size-s) 0;
+  border: 1px solid var(--outline);
+  background: var(--surface-container-lowest);
+  color: var(--on-surface-variant);
+  font-size: var(--text-s);
+  line-height: 1.4;
+  text-decoration: none;
+}
+
+.tag:hover {
+  background: var(--secondary-container);
+  color: var(--on-secondary-container);
+  opacity: 1;
+}

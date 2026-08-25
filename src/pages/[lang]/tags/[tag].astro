@@ -1,0 +1,63 @@
+---
+import { type CollectionEntry, getCollection } from "astro:content";
+import BlogCard from "../../../components/BlogCard.astro";
+import { type Language, LANGUAGES } from "../../../i18n/ui";
+import BaseSite from "../../../layouts/BaseSite.astro";
+import s from "../../../styles/page/index.module.css";
+import { tagToSlug } from "../../../utils/tagUtils";
+
+type TagPage = {
+  lang: Language;
+  tag: string;
+  posts: CollectionEntry<"blog">[];
+};
+
+export async function getStaticPaths() {
+  const posts = await getCollection("blog");
+  const pages = new Map<string, TagPage>();
+
+  for (const post of posts) {
+    const lang = post.id.split("/")[0] as Language;
+    if (!(lang in LANGUAGES)) continue;
+
+    for (const tag of post.data.tags ?? []) {
+      const slug = tagToSlug(tag);
+      if (!slug) continue;
+
+      const key = `${lang}/${slug}`;
+      const page = pages.get(key) ?? { lang, tag, posts: [] };
+      page.posts.push(post);
+      pages.set(key, page);
+    }
+  }
+
+  return [...pages.values()].map(({ lang, tag, posts }) => ({
+    params: { lang, tag: tagToSlug(tag) },
+    props: {
+      tag,
+      posts: posts.sort(
+        (a, b) => b.data.pubDate.valueOf() - a.data.pubDate.valueOf(),
+      ),
+    },
+  }));
+}
+
+type Props = Pick<TagPage, "tag" | "posts">;
+
+const { tag, posts } = Astro.props;
+const { lang } = Astro.params;
+const pageTitle = lang === "ja"
+  ? `「${tag}」の記事`
+  : `Posts tagged “${tag}”`;
+const headProps = {
+  title: pageTitle,
+  description: pageTitle,
+};
+---
+
+<BaseSite {...headProps}>
+  <h1 class={s.title}>{pageTitle}</h1>
+  <div class={s.blogWrap}>
+    {posts.map((post) => <BlogCard {post} />)}
+  </div>
+</BaseSite>
