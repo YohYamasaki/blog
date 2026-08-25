@@ -18,9 +18,16 @@
   background-color: var(--secondary-container);
 }
 
-.blogCard a {
+.postLink {
+  display: block;
   text-decoration: none;
   color: var(--on-surface);
+}
+
+.postLink::after {
+  position: absolute;
+  inset: 0;
+  content: "";
 }
 
 .body {
@@ -43,16 +50,11 @@
 }
 
 .tagWrap {
+  position: relative;
+  z-index: 1;
   display: flex;
   gap: 8px;
-}
-
-.tag {
-  font-size: var(--text-s);
-  padding: 2px var(--size-s) 0;
-  border: 1px solid var(--outline);
-  background: var(--surface-container-lowest);
-  color: var(--on-surface-variant);
+  flex-wrap: wrap;
 }
 
 .date {
