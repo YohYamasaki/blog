@@ -8,7 +8,9 @@ tags: ["SVG", "Color", "GSoC2026"]
 
 This article explains part of my work as a Graphite contributor for Google Summer of Code 2026, focusing specifically on polyfilling mesh gradients in SVG 1.1.
 
-The approaches discussed in this article are implemented as an interactive demo below.
+The approaches discussed in this article are implemented as an interactive demo below. 
+
+Update(2026-08-25): It seems that Safari has recently introduced several bugs from [this commit](https://github.com/WebKit/WebKit/commit/452bf001ddd493cec2bb64e8c2d0286a007b5738), which break the behaviour of the `feDisplacementMap`. While we investigate a workaround, please use Chromium or Firefox to run the demo.
 
 <iframe
   src="https://yayo1.com/demo/mesh-gradient-in-svg-1.1/"
@@ -498,7 +500,7 @@ This implementation calculates the inverse mapping of a Coons patch with Newton'
 
 ### Cross-Browser Differences in `feDisplacementMap`
 
-During these experiments, I found several behaviors around `feDisplacementMap` that appear to be implementation bugs in Firefox and Chromium. Safari also seems to have fixed related bugs in the first half of 2026. Overall, there are noticeable differences between browsers, so a production implementation would need to absorb them somehow.
+During these experiments, I found several behaviors around `feDisplacementMap` that appear to be implementation bugs in Safari, Chromium, and Firefox in different places. Overall, there are noticeable differences between browsers, so a production implementation would need to absorb them somehow.
 
 ### Improving Bicubic Approximation with Polylines
 
