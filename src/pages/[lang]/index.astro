@@ -1,36 +1,20 @@
 ---
-import { getCollection } from "astro:content";
-import BlogCard from "../../components/BlogCard.astro";
-import { getLangParams } from "../../i18n/ui";
-import BaseSite from "../../layouts/BaseSite.astro";
-import s from "../../styles/page/index.module.css";
-import { useTranslations } from "../../i18n/utils.ts";
-import { getZennPosts, toBlogPostSummary } from "../../utils/posts.ts";
+import PostListPage from "../../components/PostListPage.astro";
+import { getLangParams, type Language } from "../../i18n/ui";
+import {
+  getPostPage,
+  getPostPageCount,
+  getPosts,
+} from "../../utils/posts.ts";
 
 export async function getStaticPaths() {
   return getLangParams();
 }
 
-const { lang } = Astro.params;
-
-const blogPosts = await getCollection(
-  "blog",
-  (entry) => entry.id.startsWith(`${lang}/`),
-);
-const posts = [
-  ...blogPosts.map((post) => toBlogPostSummary(post, lang)),
-  ...(lang === "ja" ? await getZennPosts() : []),
-].sort((a, b) => b.pubDate.valueOf() - a.pubDate.valueOf());
-const t = useTranslations(lang);
-const headProps = {
-  title: t("blogIndex.title"),
-  description: t("blogIndex.description"),
-};
+const { lang } = Astro.params as { lang: Language };
+const allPosts = await getPosts(lang);
+const totalPages = getPostPageCount(allPosts.length);
+const posts = getPostPage(allPosts, 1);
 ---
 
-<BaseSite {...headProps}>
-  <h1 class={s.title}>Posts</h1>
-  <div class={s.blogWrap}>
-    {posts.map((post) => <BlogCard {post} />)}
-  </div>
-</BaseSite>
+<PostListPage {lang} {posts} currentPage={1} {totalPages} />

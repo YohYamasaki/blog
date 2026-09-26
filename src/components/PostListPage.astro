@@ -1,0 +1,40 @@
+---
+import type { Language } from "../i18n/ui";
+import { useTranslations } from "../i18n/utils";
+import BaseSite from "../layouts/BaseSite.astro";
+import s from "../styles/page/index.module.css";
+import type { PostSummary } from "../utils/posts";
+import BlogCard from "./BlogCard.astro";
+import Pagination from "./Pagination.astro";
+
+type Props = {
+  lang: Language;
+  posts: PostSummary[];
+  currentPage: number;
+  totalPages: number;
+};
+
+const { lang, posts, currentPage, totalPages } = Astro.props;
+const t = useTranslations(lang);
+const pageTitle = currentPage === 1
+  ? t("blogIndex.title")
+  : `${t("blogIndex.title")} - ${
+    lang === "ja" ? `${currentPage}ページ目` : `Page ${currentPage}`
+  }`;
+const pageUrl = (page: number) =>
+  page === 1 ? `/${lang}` : `/${lang}/page/${page}`;
+const headProps = {
+  title: pageTitle,
+  description: t("blogIndex.description"),
+  previousPage: currentPage > 1 ? pageUrl(currentPage - 1) : undefined,
+  nextPage: currentPage < totalPages ? pageUrl(currentPage + 1) : undefined,
+};
+---
+
+<BaseSite {...headProps}>
+  <h1 class={s.title}>Posts</h1>
+  <div class={s.blogWrap}>
+    {posts.map((post) => <BlogCard {post} />)}
+  </div>
+  <Pagination {lang} {currentPage} {totalPages} />
+</BaseSite>

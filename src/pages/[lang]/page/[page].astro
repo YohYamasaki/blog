@@ -1,0 +1,43 @@
+---
+import PostListPage from "../../../components/PostListPage.astro";
+import { type Language, LANGUAGES } from "../../../i18n/ui";
+import {
+  getPostPage,
+  getPostPageCount,
+  getPosts,
+  type PostSummary,
+} from "../../../utils/posts";
+
+type Props = {
+  posts: PostSummary[];
+  currentPage: number;
+  totalPages: number;
+};
+
+export async function getStaticPaths() {
+  const paths = [];
+
+  for (const lang of Object.keys(LANGUAGES) as Language[]) {
+    const posts = await getPosts(lang);
+    const totalPages = getPostPageCount(posts.length);
+
+    for (let currentPage = 2; currentPage <= totalPages; currentPage += 1) {
+      paths.push({
+        params: { lang, page: String(currentPage) },
+        props: {
+          posts: getPostPage(posts, currentPage),
+          currentPage,
+          totalPages,
+        },
+      });
+    }
+  }
+
+  return paths;
+}
+
+const { lang } = Astro.params as { lang: Language };
+const { posts, currentPage, totalPages } = Astro.props;
+---
+
+<PostListPage {lang} {posts} {currentPage} {totalPages} />

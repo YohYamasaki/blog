@@ -1,0 +1,56 @@
+---
+import type { Language } from "../i18n/ui";
+import s from "../styles/page/index.module.css";
+
+type Props = {
+  lang: Language;
+  currentPage: number;
+  totalPages: number;
+};
+
+const { lang, currentPage, totalPages } = Astro.props;
+const pageUrl = (page: number) =>
+  page === 1 ? `/${lang}` : `/${lang}/page/${page}`;
+const previousLabel = lang === "ja" ? "前へ" : "Previous";
+const nextLabel = lang === "ja" ? "次へ" : "Next";
+const navLabel = lang === "ja" ? "記事一覧のページ選択" : "Post pages";
+const pageNumbers = Array.from(
+  { length: totalPages },
+  (_, index) => index + 1,
+);
+---
+
+{
+  totalPages > 1 && (
+    <nav class={s.pagination} aria-label={navLabel}>
+      {
+        currentPage > 1 ? (
+          <a class={s.paginationLink} href={pageUrl(currentPage - 1)}>
+            ← {previousLabel}
+          </a>
+        ) : <span class={s.paginationPlaceholder} aria-hidden="true" />
+      }
+      <span class={s.pageNumbers}>
+        {
+          pageNumbers.map((page) => (
+            <a
+              class:list={[s.pageNumber, page === currentPage && s.currentPage]}
+              href={pageUrl(page)}
+              aria-current={page === currentPage ? "page" : undefined}
+              aria-label={`${lang === "ja" ? "ページ" : "Page"} ${page}`}
+            >
+              {page}
+            </a>
+          ))
+        }
+      </span>
+      {
+        currentPage < totalPages ? (
+          <a class={s.paginationLink} href={pageUrl(currentPage + 1)}>
+            {nextLabel} →
+          </a>
+        ) : <span class={s.paginationPlaceholder} aria-hidden="true" />
+      }
+    </nav>
+  )
+}

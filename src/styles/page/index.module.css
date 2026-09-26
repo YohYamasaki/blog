@@ -13,3 +13,49 @@
   gap: var(--size-4xl);
   margin-bottom: var(--size-3xl);
 }
+
+.pagination {
+  display: grid;
+  grid-template-columns: minmax(5.5rem, 1fr) auto minmax(5.5rem, 1fr);
+  align-items: center;
+  gap: var(--size-s);
+  width: 100%;
+  max-width: 600px;
+  margin-bottom: var(--size-3xl);
+}
+
+.paginationLink {
+  color: var(--on-surface-variant);
+  text-decoration: none;
+}
+
+.paginationLink:last-child {
+  text-align: right;
+}
+
+.paginationPlaceholder {
+  min-width: 5.5rem;
+}
+
+.pageNumbers {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--size-xs);
+}
+
+.pageNumber {
+  display: inline-grid;
+  place-items: center;
+  min-width: 2.25rem;
+  min-height: 2.25rem;
+  border: 1px solid transparent;
+  color: var(--on-surface-variant);
+  text-decoration: none;
+}
+
+.currentPage {
+  border-color: var(--outline);
+  color: var(--on-surface);
+  background: var(--surface-container);
+}
