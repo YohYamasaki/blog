@@ -16,6 +16,7 @@
     "@astrojs/solid-js": "^7.0.2",
     "astro": "^7.2.4",
     "autoprefixer": "^10.5.4",
+    "fast-xml-parser": "^5.11.1",
     "rehype-katex": "^7.0.1",
     "remark-link-card-plus": "^0.8.0",
     "remark-math": "^6.0.0",

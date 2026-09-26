@@ -1,33 +1,56 @@
 ---
-import { type CollectionEntry } from "astro:content";
 import s from "../styles/components/BlogCard.module.css";
+import zennIcon from "../assets/images/about/zenn-icon.svg?raw";
+import type { PostSummary } from "../utils/posts";
 import FormattedDate from "./FormattedDate.astro";
 import TagLink from "./TagLink.astro";
 
 type Props = {
-  post: CollectionEntry<"blog">;
+  post: PostSummary;
 };
 
 const { post } = Astro.props;
-const { lang } = Astro.params;
+const isExternal = post.source === "zenn";
 ---
 
 <div class={s.blogCard}>
   <div class={s.body}>
     <div class={s.meta}>
       <span class={s.tagWrap}>
-        {post.data.tags?.map((tag) => <TagLink {tag} />)}
+        {
+                    isExternal ? (
+            <span class={s.source}>
+              <span
+                class={s.sourceIcon}
+                aria-hidden="true"
+                set:html={zennIcon}
+              />
+              Zenn
+              <span aria-hidden="true">↗</span>
+            </span>
+          ): (
+                     post.tags?.map((tag) => <TagLink {tag} />)
+          )
+        }
       </span>
       <span class={s.date}>
-        <FormattedDate date={post.data.pubDate} />
+        <FormattedDate date={post.pubDate} timeZone={post.timeZone} />
       </span>
     </div>
     <a
       class={s.postLink}
-      href={`/${lang}/blog/${post.id.replace(`${lang}/`, "")}`}
+      href={post.href}
+      target={isExternal ? "_blank" : undefined}
+      rel={isExternal ? "noopener noreferrer" : undefined}
     >
-      <h2 class={s.title}>{post.data.title}</h2>
-      <p class={s.desc}>{post.data.description}</p>
+      <h2 class={s.title}>{post.title}</h2>
+      {
+        post.description && (
+          <p class:list={[s.desc, isExternal && s.externalDesc]}>
+            {post.description}
+          </p>
+        )
+      }
     </a>
   </div>
 </div>
