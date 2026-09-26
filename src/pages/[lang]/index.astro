@@ -5,6 +5,7 @@ import { getLangParams } from "../../i18n/ui";
 import BaseSite from "../../layouts/BaseSite.astro";
 import s from "../../styles/page/index.module.css";
 import { useTranslations } from "../../i18n/utils.ts";
+import { getZennPosts, toBlogPostSummary } from "../../utils/posts.ts";
 
 export async function getStaticPaths() {
   return getLangParams();
@@ -12,9 +13,14 @@ export async function getStaticPaths() {
 
 const { lang } = Astro.params;
 
-const posts = (
-  await getCollection("blog", (entry) => entry.id.startsWith(lang))
-).sort((a, b) => b.data.pubDate.valueOf() - a.data.pubDate.valueOf());
+const blogPosts = await getCollection(
+  "blog",
+  (entry) => entry.id.startsWith(`${lang}/`),
+);
+const posts = [
+  ...blogPosts.map((post) => toBlogPostSummary(post, lang)),
+  ...(lang === "ja" ? await getZennPosts() : []),
+].sort((a, b) => b.pubDate.valueOf() - a.pubDate.valueOf());
 const t = useTranslations(lang);
 const headProps = {
   title: t("blogIndex.title"),
@@ -25,14 +31,6 @@ const headProps = {
 <BaseSite {...headProps}>
   <h1 class={s.title}>Posts</h1>
   <div class={s.blogWrap}>
-    {
-      posts
-        .sort(
-          (a, b) =>
-            a.data.pubDate.getMilliseconds() -
-            b.data.pubDate.getMilliseconds(),
-        )
-        .map((p) => <BlogCard post={p} />)
-    }
+    {posts.map((post) => <BlogCard {post} />)}
   </div>
 </BaseSite>

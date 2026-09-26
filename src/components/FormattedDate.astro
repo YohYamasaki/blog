@@ -1,9 +1,10 @@
 ---
 interface Props {
   date: Date;
+  timeZone?: string;
 }
 
-const { date } = Astro.props;
+const { date, timeZone } = Astro.props;
 ---
 
 <time datetime={date.toISOString()}>
@@ -12,6 +13,7 @@ const { date } = Astro.props;
       year: "numeric",
       month: "short",
       day: "numeric",
+      timeZone,
     })
   }
 </time>

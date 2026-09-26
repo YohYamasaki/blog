@@ -4,6 +4,7 @@ import BlogCard from "../../../components/BlogCard.astro";
 import { type Language, LANGUAGES } from "../../../i18n/ui";
 import BaseSite from "../../../layouts/BaseSite.astro";
 import s from "../../../styles/page/index.module.css";
+import { toBlogPostSummary } from "../../../utils/posts";
 import { tagToSlug } from "../../../utils/tagUtils";
 
 type TagPage = {
@@ -58,6 +59,6 @@ const headProps = {
 <BaseSite {...headProps}>
   <h1 class={s.title}>{pageTitle}</h1>
   <div class={s.blogWrap}>
-    {posts.map((post) => <BlogCard {post} />)}
+    {posts.map((post) => <BlogCard post={toBlogPostSummary(post, lang)} />)}
   </div>
 </BaseSite>
