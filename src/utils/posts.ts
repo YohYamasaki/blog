@@ -1,4 +1,4 @@
-import type { CollectionEntry } from "astro:content";
+import { type CollectionEntry, getCollection } from "astro:content";
 import { XMLParser } from "fast-xml-parser";
 
 export type PostSummary = {
@@ -15,6 +15,8 @@ const ZENN_PROFILE_URL = "https://zenn.dev/yayo1";
 const ZENN_FEED_URL = `${ZENN_PROFILE_URL}/feed?all=1`;
 const ZENN_ARTICLE_PATH_PREFIX = "/yayo1/articles/";
 const DESCRIPTION_LENGTH = 160;
+
+export const POSTS_PER_PAGE = 10;
 
 type ZennFeedItem = {
   title?: unknown;
@@ -35,6 +37,27 @@ export function toBlogPostSummary(
     href: `/${lang}/blog/${post.id.replace(`${lang}/`, "")}`,
     source: "blog",
   };
+}
+
+export async function getPosts(lang: string): Promise<PostSummary[]> {
+  const blogPosts = await getCollection(
+    "blog",
+    (entry) => entry.id.startsWith(`${lang}/`),
+  );
+
+  return [
+    ...blogPosts.map((post) => toBlogPostSummary(post, lang)),
+    ...(lang === "ja" ? await getZennPosts() : []),
+  ].sort((a, b) => b.pubDate.valueOf() - a.pubDate.valueOf());
+}
+
+export function getPostPageCount(postCount: number): number {
+  return Math.max(1, Math.ceil(postCount / POSTS_PER_PAGE));
+}
+
+export function getPostPage(posts: PostSummary[], page: number): PostSummary[] {
+  const start = (page - 1) * POSTS_PER_PAGE;
+  return posts.slice(start, start + POSTS_PER_PAGE);
 }
 
 function asString(value: unknown): string | undefined {
