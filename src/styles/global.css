@@ -233,6 +233,20 @@ footer {
     margin-bottom: 0;
   }
 
+  .speakerdeck-preview {
+    width: 100%;
+    margin: var(--size-l) 0;
+  }
+
+  .speakerdeck-preview__player {
+    display: block;
+    width: 100%;
+    height: auto;
+    aspect-ratio: var(--speakerdeck-aspect-ratio);
+    border: 1px solid var(--outline-variant);
+    background-color: var(--surface-container);
+  }
+
   /* Accordion code block */
   p:has(strong):has(+ .astro-code) {
     background: var(--secondary-container);
