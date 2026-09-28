@@ -86,6 +86,36 @@
   height: auto;
 }
 
+.webmentions {
+  margin-top: var(--size-3xl);
+  padding-top: var(--size-l);
+  border-top: 1px solid var(--outline-variant);
+}
+
+.webmentions:empty {
+  display: none;
+}
+
+.webmentions :global(.wm-title),
+.webmentions :global(.wm-heading) {
+  color: var(--on-surface);
+}
+
+.webmentions :global(.wm-avatar) {
+  border: 1px solid var(--outline-variant);
+}
+
+.webmentions :global(.wm-reply) {
+  border-color: var(--outline-variant);
+  background-color: var(--surface-container);
+  color: var(--on-surface-variant);
+}
+
+.webmentions :global(.wm-name),
+.webmentions :global(.wm-content) {
+  color: inherit;
+}
+
 @media (min-width: 768px) {
   .body {
     padding: var(--size-xl);

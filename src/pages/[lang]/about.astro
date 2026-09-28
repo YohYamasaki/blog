@@ -24,15 +24,16 @@ const t = useTranslations(getLangFromUrl(Astro.url));
     />
     <h1 class={s.title}>Yohei Yamasaki<br />(yayoi)</h1>
     <div class={s.links}>
-      <a href="https://github.com/YohYamasaki" target="_blank"><span
-          class={s.linkIcon}
-          set:html={githubIcon}
-        ></span>
+      <a
+        href="https://github.com/YohYamasaki"
+        target="_blank"
+        rel="me noopener noreferrer"
+      ><span class={s.linkIcon} set:html={githubIcon} />
       </a>
       <a href="https://zenn.dev/yayo1" target="_blank"><span
           class={s.linkIcon}
           set:html={zennIcon}
-        ></span>
+        />
       </a>
     </div>
     <p class={s.description}>
