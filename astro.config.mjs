@@ -7,6 +7,7 @@ import { defineConfig } from "astro/config";
 import rehypeKatex from "rehype-katex";
 import remarkMath from "remark-math";
 import remarkLinkCard from "remark-link-card-plus";
+import remarkSpeakerDeck from "./src/plugins/remark-speaker-deck.mjs";
 
 // https://astro.build/config
 export default defineConfig({
@@ -14,7 +15,7 @@ export default defineConfig({
   integrations: [mdx(), sitemap(), solidJs()],
   markdown: {
     processor: unified({
-      remarkPlugins: [remarkMath, remarkLinkCard],
+      remarkPlugins: [remarkMath, remarkSpeakerDeck, remarkLinkCard],
       rehypePlugins: [rehypeKatex],
     }),
   },
