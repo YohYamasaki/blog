@@ -30,57 +30,57 @@
 
 [data-theme="light"] {
   color-scheme: light dark;
-  --primary: #006b5f;
+  --primary: #38665f;
   --on-primary: #ffffff;
-  --primary-container: #9ef2e3;
-  --on-primary-container: #005048;
+  --primary-container: #c8ddd8;
+  --on-primary-container: #294c46;
 
-  --secondary: #4a635e;
+  --secondary: #536661;
   --on-secondary: #ffffff;
-  --secondary-container: #cce8e2;
-  --on-secondary-container: #334b47;
+  --secondary-container: #d7e1de;
+  --on-secondary-container: #3b4e49;
 
-  --tertiary: #456179;
+  --tertiary: #526777;
   --on-tertiary: #ffffff;
-  --tertiary-container: #cce5ff;
-  --tertiary-container-light: #2d4960;
+  --tertiary-container: #d7e0e7;
+  --tertiary-container-light: #455762;
 
-  --surface: #f4fbf8;
-  --surface-container: #e9efec;
-  --surface-container-lowest: #ffffff;
-  --on-surface: #161d1b;
-  --on-surface-variant: #3f4946;
+  --surface: #f6f8f7;
+  --surface-container: #ecefed;
+  --surface-container-lowest: #fbfcfb;
+  --on-surface: #202523;
+  --on-surface-variant: #505955;
 
-  --outline: #161d1b;
-  --outline-variant: #6f7976;
-  --outline-variant-transparent: #6f797644;
+  --outline: #6d7773;
+  --outline-variant: #9da6a2;
+  --outline-variant-transparent: #9da6a244;
 }
 
 [data-theme="dark"] {
-  --primary: #82d5c7;
-  --on-primary: #003731;
-  --primary-container: #005047;
-  --on-primary-container: #9ef2e3;
+  --primary: #9abdb6;
+  --on-primary: #183630;
+  --primary-container: #344e49;
+  --on-primary-container: #c0d4d0;
 
-  --secondary: #b1ccc6;
-  --on-secondary: #1c3531;
-  --secondary-container: #334b47;
-  --on-secondary-container: #cce8e2;
+  --secondary: #adbfba;
+  --on-secondary: #263733;
+  --secondary-container: #3b4946;
+  --on-secondary-container: #d0dbd8;
 
-  --tertiary: #accae5;
-  --on-tertiary: #143349;
-  --tertiary-container: #2d4a60;
-  --tertiary-container-light: #cbe6ff;
+  --tertiary: #aab9c4;
+  --on-tertiary: #263741;
+  --tertiary-container: #3e4f5a;
+  --tertiary-container-light: #c8d2d8;
 
-  --surface: #0e1513;
-  --surface-container: #1a211f;
-  --surface-container-lowest: #090f0e;
-  --on-surface: #dde4e1;
-  --on-surface-variant: #bec9c5;
+  --surface: #151918;
+  --surface-container: #222625;
+  --surface-container-lowest: #111413;
+  --on-surface: #e0e4e2;
+  --on-surface-variant: #b6bfbb;
 
-  --outline: #dde4e1;
-  --outline-variant: #3f4946;
-  --outline-variant-transparent: #3f494644;
+  --outline: #8b9691;
+  --outline-variant: #4c5552;
+  --outline-variant-transparent: #4c555244;
 }
 
 * {
@@ -95,7 +95,7 @@ body {
   background-size: 100% 600px;
   word-wrap: break-word;
   overflow-wrap: break-word;
-  line-height: 1.6;
+  line-height: 2;
   font-size: var(--text-base);
   font-family:
     -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", Helvetica,
@@ -204,6 +204,33 @@ footer {
     width: initial;
     max-width: 100%;
     margin-inline: auto;
+  }
+
+  blockquote {
+    position: relative;
+    margin-block: var(--size-l);
+    margin-inline: 0;
+    padding: var(--size-m) var(--size-l);
+    padding-inline-start: calc(var(--size-l) + 0.75rem);
+    border-inline-start: 4px solid var(--primary);
+    background-color: var(--surface-container);
+    color: var(--on-surface-variant);
+  }
+
+  blockquote::before {
+    content: "“";
+    position: absolute;
+    inset-block-start: 0.35rem;
+    inset-inline-start: 0.65rem;
+    color: var(--primary);
+    font-family: Georgia, "Times New Roman", serif;
+    font-size: 2rem;
+    font-weight: 600;
+    line-height: 1;
+  }
+
+  blockquote > :last-child {
+    margin-bottom: 0;
   }
 
   /* Accordion code block */
