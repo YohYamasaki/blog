@@ -1,11 +1,13 @@
 ---
 import { SITE_DESCRIPTION, SITE_TITLE } from "../consts";
+import defaultSocialImage from "../assets/images/about/plastic-duck.jpg";
 import "../styles/global.css";
 
 export type BaseHeadProps = {
   title?: string;
   description?: string;
   image?: string;
+  imageAlt?: string;
   previousPage?: string;
   nextPage?: string;
   showWebmentions?: boolean;
@@ -18,13 +20,16 @@ const canonicalURL = new URL(Astro.url.pathname, Astro.site);
 const {
   title,
   description = SITE_DESCRIPTION,
-  image = "/favicon.svg",
+  image = defaultSocialImage.src,
+  imageAlt = "A yellow toy duck under a blue sky",
   previousPage,
   nextPage,
   showWebmentions = false,
 } = Astro.props;
 
 const finalTitle = title ? `${title} | ${SITE_TITLE}` : SITE_TITLE;
+const socialImageURL = new URL(image, Astro.site);
+const isDefaultSocialImage = image === defaultSocialImage.src;
 ---
 
 <!-- Global Metadata -->
@@ -64,17 +69,35 @@ const finalTitle = title ? `${title} | ${SITE_TITLE}` : SITE_TITLE;
 
 <!-- Open Graph / Facebook -->
 <meta property="og:type" content="website" />
-<meta property="og:url" content={Astro.url} />
+<meta property="og:url" content={canonicalURL} />
 <meta property="og:title" content={finalTitle} />
 <meta property="og:description" content={description} />
-<meta property="og:image" content={new URL(image, Astro.url)} />
+<meta property="og:site_name" content={SITE_TITLE} />
+<meta property="og:image" content={socialImageURL} />
+<meta property="og:image:alt" content={imageAlt} />
+{
+  isDefaultSocialImage && (
+    <>
+      <meta property="og:image:type" content="image/jpeg" />
+      <meta
+        property="og:image:width"
+        content={String(defaultSocialImage.width)}
+      />
+      <meta
+        property="og:image:height"
+        content={String(defaultSocialImage.height)}
+      />
+    </>
+  )
+}
 
 <!-- Twitter -->
-<meta property="twitter:card" content="summary_large_image" />
-<meta property="twitter:url" content={Astro.url} />
-<meta property="twitter:title" content={finalTitle} />
-<meta property="twitter:description" content={description} />
-<meta property="twitter:image" content={new URL(image, Astro.url)} />
+<meta name="twitter:card" content="summary" />
+<meta name="twitter:url" content={canonicalURL} />
+<meta name="twitter:title" content={finalTitle} />
+<meta name="twitter:description" content={description} />
+<meta name="twitter:image" content={socialImageURL} />
+<meta name="twitter:image:alt" content={imageAlt} />
 
 <!-- Katex -->
 
