@@ -8,6 +8,7 @@ export type BaseHeadProps = {
   image?: string;
   previousPage?: string;
   nextPage?: string;
+  showWebmentions?: boolean;
 };
 
 type Props = BaseHeadProps;
@@ -20,6 +21,7 @@ const {
   image = "/favicon.svg",
   previousPage,
   nextPage,
+  showWebmentions = false,
 } = Astro.props;
 
 const finalTitle = title ? `${title} | ${SITE_TITLE}` : SITE_TITLE;
@@ -36,6 +38,24 @@ const finalTitle = title ? `${title} | ${SITE_TITLE}` : SITE_TITLE;
 {previousPage && <link rel="prev" href={new URL(previousPage, Astro.site)} />}
 {nextPage && <link rel="next" href={new URL(nextPage, Astro.site)} />}
 <link rel="sitemap" href="/sitemap-index.xml" />
+<link rel="me" href="https://github.com/YohYamasaki" />
+<link rel="webmention" href="https://webmention.io/yayo1.com/webmention" />
+
+{
+  showWebmentions && (
+    <>
+      <link
+        rel="stylesheet"
+        href="https://webmention.io/assets/webmention-render.css"
+      />
+      <script
+        is:inline
+        src="https://webmention.io/js/webmention-render.js"
+        defer
+      />
+    </>
+  )
+}
 
 <!-- Primary Meta Tags -->
 <title>{finalTitle}</title>
