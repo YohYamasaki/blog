@@ -1,0 +1,268 @@
+---
+title: "Adaptive Tessellation of Bézier Surfaces with Quadtrees"
+description: "How Morton-ordered quadtrees and the properties of Bézier surfaces fit together for adaptive, watertight tessellation"
+pubDate: 2026-10-05
+updatedDate: 2026-10-05
+tags: ["Geometry", "Tessellation", "Vector Graphics"]
+---
+
+import DynamicPicture from "../../../components/common/DynamicPicture.astro";
+
+To render a Bézier surface through the usual GPU rasterization pipeline, you first need to approximate it with a triangle mesh. In this post, I'll show how quadtrees, better known from collision detection and map traversal in games, turn out to be a great fit for doing that adaptively and without cracks.
+
+I made an interactive demo of everything covered here. You can drag the control points of a Bézier surface around and watch each step of the tessellation process.
+
+<iframe
+  src="https://yayo1.com/demo/bezier-playground/"
+  title="Interactive Bézier surface tessellation demo"
+  loading="lazy"
+  style="display: block; width: 100%; height: 700px; border: 1px solid var(--outline);"
+></iframe>
+
+https://yayo1.com/demo/bezier-playground/
+
+## What Is a Quadtree?
+
+A quadtree is a tree in which every internal node has exactly four children. It's mostly used to recursively split 2D space into four quadrants. Besides managing objects and maps in games, quadtrees are used in map rendering to efficiently swap in finer tiles as you zoom in, and for spatial indexes in databases.
+
+<DynamicPicture src="/src/assets/images/blog/adaptive-tessellation-of-bezier-surfaces/quadtree-example.png" alt="Quadtree example" style="width: 300px" /> _An example of a quadtree_
+
+One nice thing about quadtrees is that a cell can be split based on a condition local to that cell, without looking at the rest of the tree. That makes efficient adaptive subdivision possible.
+
+On the other hand, something like "find the neighboring cell at the same depth" turns out to be a little slow if you implement it naively. You have to walk up the tree until you reach the common ancestor of the two cells, so the search is linear in the depth of the tree.
+
+For an ordinary tree that might look like the best you can do, but with one trick you can bring it down to $O(1)$.
+
+## Morton Order (Z-order)
+
+To get constant-time access, we first give each cell a number called a Morton code. The root gets 0. At the next depth, the top-left, top-right, bottom-left, and bottom-right cells get 0, 1, 2, and 3. Then we keep doing the same thing recursively, as shown below.
+
+![Morton codes](/src/assets/images/blog/adaptive-tessellation-of-bezier-surfaces/morton-codes.png)
+
+That's how Morton codes are assigned, and the ordering they produce is called the Morton order. Stacking the levels in 3D makes the relationship between them easier to see.
+
+<DynamicPicture src="/src/assets/images/blog/adaptive-tessellation-of-bezier-surfaces/stacked-morton-codes.png" alt="Stacked Morton codes" style="width: 300px" />
+
+At this point you might be wondering why anyone would bother with these numbers. But write them out in binary and a neat pattern shows up. If you split a Morton code into its lowest two bits and everything above them, the lowest two bits tell you which quadrant of the parent the cell is in, and the rest is the parent's Morton code.
+
+<DynamicPicture src="/src/assets/images/blog/adaptive-tessellation-of-bezier-surfaces/morton-codes-in-binary.png" alt="Morton codes in binary" style="width: 300px" /> _Morton codes of the depth-1 cells in binary_
+
+Take $13_{10} = 1101_{2}$ as an example. The lowest two bits, $01_2$, tell us that cell $13_{10}$ sits in the top-right quadrant of its parent. The remaining bits, $11_2$, are the parent's Morton code, $3_{10}$. And because the Morton order is recursive, every cell's code carries the information of all its ancestors.
+
+Morton codes also let you recover a cell's coordinates at its depth. Take the 1st, 3rd, 5th, ... bits counting from the least significant bit and pack them together, and you get the horizontal coordinate. Do the same with the 2nd, 4th, 6th, ... bits and you get the vertical one.
+
+Using $13_{10} = 1101_{2}$ again, the odd-numbered bits give $11_{2} = 3_{10}$ and the even-numbered bits give $10_{2} = 2_{10}$. Sure enough, $(3,2)$ is exactly where $13_{10}$ is.
+
+<DynamicPicture src="/src/assets/images/blog/adaptive-tessellation-of-bezier-surfaces/coordinates-from-morton-code.png" alt="Coordinates from a Morton code" style="width: 300px" /> _You can get the coordinates out of a Morton code_
+
+These properties of the Morton order cover the weakness of quadtrees mentioned earlier. To sum up, giving each quadtree cell a Morton code gets you the following.
+
+- adaptive subdivision based on local conditions
+- no need to store pointers to parents or children
+- any ancestor or descendant of a cell in $O(1)$
+- the neighbors of a cell at the same depth in $O(1)$
+
+That's a pretty powerful combination for a data structure.
+
+## Parametric Surfaces
+
+Next, let's look at how parametric surfaces work. The surfaces we'll cover are defined as extensions of curves, so we'll start with curves.
+
+### Defining Bézier Curves
+
+The parametric curve you've most likely come across is the Bézier curve.
+
+<DynamicPicture src="/src/assets/images/blog/adaptive-tessellation-of-bezier-surfaces/cubic-bezier-example.png" alt="Cubic Bézier curve example" style="width: 500px" /> _An example of a cubic Bézier curve_
+
+A Bézier curve is defined as follows.
+
+$$
+\begin{align*}
+C(t) &= \sum_{i=0}^{n} B^n_i(t)P_i \\
+B_i^n(t) &= \binom{n}{i} t^i (1-t)^{n-i}
+\end{align*}
+$$
+
+In computer graphics, you'll almost always be dealing with cubic Bézier curves, so let's expand the cubic basis functions as an example.
+
+$$
+\begin{align*}
+C(t)
+&= B_0^3(t)P_0 + B_1^3(t)P_1 + B_2^3(t)P_2 + B_3^3(t)P_3 \\
+&= (1-t)^3 P_0 \\
+&\quad + 3t(1-t)^2 P_1 \\
+&\quad + 3t^2(1-t) P_2 \\
+&\quad + t^3 P_3 \\
+\end{align*}
+$$
+
+### Properties of Bézier Curves
+
+One nice property of Bézier curves is that every point on the curve is a convex combination of the control points. The coefficients produced by the basis functions are never negative, and they always add up to exactly 1.
+
+<DynamicPicture src="/src/assets/images/blog/adaptive-tessellation-of-bezier-surfaces/bernstein-convex-combination.png" alt="Convex combination of the Bernstein basis" style="width: 400px" /> _How much each term contributes in a cubic Bézier curve_
+
+Another important property is that they're easy to split. For this we use De Casteljau's algorithm.
+
+De Casteljau's algorithm finds the point on the curve at $t$ by linearly interpolating between each pair of adjacent control points by $t$, then interpolating those results again, and so on, until only one point is left.
+
+![De Casteljau's algorithm](/src/assets/images/blog/adaptive-tessellation-of-bezier-surfaces/de-casteljau.gif)
+_Drawing a cubic Bézier curve with De Casteljau's algorithm_
+
+Building on this, you can split the curve at $t$. Take the first point from each level of the interpolation, starting with the original control points, and you get the control points of the left half. Take the last point from each level and you get the right half. Both halves are Bézier curves of the same degree as the original, so for a cubic curve, an exact split takes just six linear interpolations.
+
+<DynamicPicture src="/src/assets/images/blog/adaptive-tessellation-of-bezier-surfaces/splitting-cubic-bezier.png" alt="Splitting a cubic Bézier curve" style="width: 400px" /> _Splitting a cubic Bézier curve at $t=0.5$_
+
+### Bézier Surfaces
+
+A Bézier surface is a Bézier curve extended in the $u$ and $v$ directions. The most common one is the bicubic Bézier surface. A cubic Bézier curve has four control points, so the surface has 16.
+
+$$
+\begin{align*}
+S(u,v)
+&= \sum_{i=0}^{3}\sum_{j=0}^{3}
+B_i^3(u) B_j^3(v) P_{ij}
+\end{align*}
+$$
+
+<DynamicPicture src="/src/assets/images/blog/adaptive-tessellation-of-bezier-surfaces/bicubic-bezier-surface.png" alt="Bicubic Bézier surface" style="width: 400px" /> _An example of a bicubic Bézier surface_
+
+There are other parametric surfaces too. Coons patches define the interior from four boundary curves, bicubic Hermite surfaces are built from the positions and tangents at the corners, and NURBS, the de facto standard in CAD, offer more intuitive and flexible control. Most of them can be represented exactly with one or more Bézier surfaces, and since Bézier surfaces are so convenient to work with, they're often converted to Bézier form for rendering.
+
+So in the next section, we'll stick to non-rational (unweighted) bicubic Bézier surfaces and see how they relate to quadtrees.
+
+## Quadtrees and Bézier Surfaces
+
+So far we've looked at how Bézier surfaces are defined. But that's only a mathematical definition, so how do you actually rasterize one? This is where quadtrees finally come in.
+
+To rasterize a surface, you first need to approximate it with a bunch of triangles. Covering a surface with triangles like this is called meshing, or tessellation. Ideally we'd also tessellate adaptively, since generating lots of triangles where they aren't needed just wastes performance. A quadtree can decide whether to subdivide by looking at a single cell, which is exactly what adaptive tessellation needs.
+
+We start by mapping one quadtree cell to one Bézier surface. To decide whether to subdivide it further, a reasonable test is whether two triangles, formed by connecting the four corners with straight lines and one diagonal, approximate the target surface closely enough.
+
+### Checking the Triangle Approximation
+
+#### Error Between the Bicubic Bézier Surface and a Bilinear Surface
+
+In the first step, we build a bilinear surface from the four corners $A,B,C,D$. It linearly interpolates in both $u$ and $v$, which gives the following.
+
+$$
+\begin{aligned}
+L(u,v) &= (1-u)(1-v)A +u(1-v)B +(1-u)vC +uvD, \quad 0\le u,v\le1 \\
+\end{aligned}
+$$
+
+<DynamicPicture src="/src/assets/images/blog/adaptive-tessellation-of-bezier-surfaces/bilinear-surface.png" alt="Bilinear surface" style="width: 400px" /> _A bilinear surface_
+
+So how do we compare this with the target Bézier surface? The convex combination property helps here. The difference between two Bézier surfaces of the same degree is itself a Bézier surface whose control points are the differences of the original control points. Every point on it is a convex combination of those differences, so it can never be larger than the largest one. That gives us a safe error bound without any sampling.
+
+If we treat the bilinear surface as a bilinear (degree 1×1) Bézier surface and elevate it to bicubic, all we have to do is compare its control points one-to-one with those of the target bicubic surface. We'll keep the largest difference between corresponding control points as $E_1$.
+
+#### Error Between the Bilinear Surface and Two Triangles
+
+The second step compares the bilinear surface with the two-triangle approximation. Written in parametric form, the triangles look like this.
+
+$$
+\begin{aligned}
+T(u,v) &= \begin{cases} (1-u-v)A+uB+vC, & u+v\le1\\[4pt] (1-v)B+(1-u)C+(u+v-1)D, & u+v\ge1 \end{cases}
+\end{aligned}
+$$
+
+<DynamicPicture src="/src/assets/images/blog/adaptive-tessellation-of-bezier-surfaces/two-triangles.png" alt="Two triangles" style="width: 400px" /> _Approximating with two triangles_
+
+Here we know the maximum error always occurs at the center of the patch, so conveniently we can get it with a single evaluation. We'll call this $E_2$.
+
+<details>
+<summary>Why the maximum error is at the center</summary>
+
+The error is $L(u, v)-T(u, v)$, so
+
+$$
+L(u,v)-T(u,v)= \begin{cases} uv(A-B-C+D) & u+v\le1,\\[6pt] (1-u)(1-v)(A-B-C+D), & u+v\ge1 \end{cases}
+$$
+
+Next, we find the $u,v$ that maximize each case.
+
+$$
+\begin{aligned}
+u+v\le1 &\implies uv\le\frac{(u+v)^2}{4}\le\frac14\\
+u+v\ge1 &\implies (1-u)(1-v) \le\frac{(2-u-v)^2}{4}\le\frac14
+\end{aligned}
+$$
+
+So the error is largest at $u = v = \frac12$.
+
+</details>
+
+With $E_1$ and $E_2$ in hand, we can use $E = E_1 + E_2$ as the total error and subdivide whenever it exceeds a preset threshold. And when we subdivide the Bézier surface, De Casteljau's algorithm shows up again. It lets us split the surface with really simple arithmetic.
+
+![Adaptive quadtree subdivision](/src/assets/images/blog/adaptive-tessellation-of-bezier-surfaces/adaptive-quadtree-splitting.gif)
+_Subdividing a Bézier surface with a quadtree_
+
+### Watertight Tessellation and Morton Order
+
+If you look closely at the animation above, you'll notice a few gaps.
+
+They're caused by vertices that don't touch any other vertex. Even if you define such a vertex to sit exactly on an edge, numerical error can still open up gaps during rasterization. So to tessellate without gaps, vertices have to connect to other vertices.
+
+Tessellation without these gaps is called watertight tessellation, and a spot where a vertex meets an edge instead of another vertex is called a T-junction. Let's see how to make the tessellation watertight.
+
+### Balanced Quadtrees and Morton Order
+
+Before handling T-junctions, we first make sure that each edge of a cell has at most one T-junction. A quadtree that satisfies this, where neighboring cells differ in depth by at most one, is called a balanced quadtree.
+
+Balancing happens during subdivision. Whenever you split a cell, any cell adjacent to it at its parent's depth that hasn't been split yet gets split too. These splits can propagate, so you end up accessing parent and neighboring cells a lot.
+
+This is exactly what Morton codes are good at. A cell's Morton code already contains its parent's code, and from the parent's code you can compute a neighbor's code in $O(1)$. It all fits together nicely.
+
+When tessellating a balanced quadtree, cells without T-junctions can keep their two triangles. Cells with T-junctions get a fan instead, with lines radiating out from the midpoint of the diagonal to every corner and every T-junction. That midpoint is called a Steiner point. The lines from the Steiner point to the T-junctions have to connect to the vertices of the more finely subdivided neighbor, so compute the T-junction positions from the surface equation itself, not from the approximating triangles.
+
+> Besides keeping the tessellation simple, balancing also helps reduce the long, skinny triangles that GPUs hate, because every triangle ends up with only 45° and 90° angles in parameter space.
+
+![Balanced quadtree and watertight tessellation](/src/assets/images/blog/adaptive-tessellation-of-bezier-surfaces/balanced-quadtree-watertight.gif)
+_Balancing the quadtree and tessellating it watertight_
+
+And with that, we can tessellate surfaces adaptively using a quadtree.
+
+## Preserving UV Space
+
+So far we've looked at meshing only in terms of approximating the shape, but ideally we'd also preserve the surface's UV space. Being able to evaluate things by UV makes it easier to apply displacement in 3D, and to handle things like trimmed surfaces. In 2D, mapping an image's UVs directly onto the surface's UVs gives you a cage-transform-style warp, and if you assign colors to the vertices and pass them to a color evaluation function along with the UVs, you get a mesh gradient.
+
+If the fragment shader could read those UVs directly, all of these features could share the same subdivision step.
+
+Some background first. When the GPU rasterizes a triangle, the values passed to the fragment shader are linearly interpolated using the barycentric coordinates inside that triangle. So even if you put two triangles side by side to make a quad, the barycentrically interpolated UVs won't match the bilinearly interpolated UVs you actually want.
+
+But doesn't this sound a lot like what we did for the quadtree error check? There, we called the error between the cubic Bézier surface and the bilinear surface $E_1$, the error between the bilinear surface and the two triangles $E_2$, and subdivided whenever $E_1 + E_2$ went over a threshold.
+
+Remember that $E$ is the distance between a point on the surface and the point on the approximation with the same UV. That means if we project it into camera space, we can express it in screen pixels. For example, with a threshold of 1px, the maximum difference between the UVs the GPU interpolates and the surface's true UVs stays within 1px on screen.
+
+By subdividing the quadtree against this camera-space threshold, we get adaptive tessellation that follows resolution and zoom level, and a good approximation of UV space, both at once.
+
+![UV-texture](/src/assets/images/blog/adaptive-tessellation-of-bezier-surfaces/uv-texture.png)
+_The texture follows the surface's UVs without kinks along the triangle edges_
+
+## Wrapping Up
+
+I found this while writing the post, but it looks like AMD and others published a paper in 2026 on efficiently tessellating surfaces on the GPU, also based on quadtrees. As far as I can tell, they check the error by sampling, and instead of balancing the tree, they fill the gaps with extra triangles. If this topic caught your interest, it's worth a look.
+
+https://gpuopen.com/learn/gpu-view-adaptive-subdivision/
+
+Anyway, I hope this gave you a feel for how fun quadtrees and Bézier surfaces are, and how satisfying it is when they click together. Thanks for reading all the way to the end!
+
+---
+
+## References
+
+
+https://pomax.github.io/bezierinfo/
+
+https://en.wikipedia.org/wiki/B%C3%A9zier_curve
+
+https://en.wikipedia.org/wiki/Cubic_Hermite_spline
+
+https://developer.nvidia.com/gpugems/gpugems2/part-i-geometric-complexity/chapter-7-adaptive-tessellation-subdivision-surfaces
+
+https://gpuopen.com/learn/bilinear-interpolation-quadrilateral-barycentric-coordinates/
+
+https://gpuopen.com/learn/gpu-view-adaptive-subdivision/
+
+https://developer.arm.com/community/arm-community-blogs/b/mobile-graphics-and-gaming-blog/posts/finding-and-fixing-hidden-performance-problems-in-mobile-games-with-arm-performance-studio
