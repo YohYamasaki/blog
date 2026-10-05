@@ -121,3 +121,32 @@
     padding: var(--size-xl);
   }
 }
+
+.imageZoom {
+  width: 100vw;
+  height: 100dvh;
+  max-width: none;
+  max-height: none;
+  margin: 0;
+  padding: var(--size-l);
+  border: none;
+  background: transparent;
+  cursor: zoom-out;
+}
+
+.imageZoom[open] {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.imageZoom::backdrop {
+  background-color: rgb(0 0 0 / 0.8);
+}
+
+.imageZoom img {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  border-radius: var(--br-s);
+}

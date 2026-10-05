@@ -48,6 +48,7 @@
   --surface: #f6f8f7;
   --surface-container: #ecefed;
   --surface-container-lowest: #fbfcfb;
+  --surface-bright: #ffffff;
   --on-surface: #202523;
   --on-surface-variant: #505955;
 
@@ -75,6 +76,7 @@
   --surface: #151918;
   --surface-container: #222625;
   --surface-container-lowest: #111413;
+  --surface-bright: #0b0d0c;
   --on-surface: #e0e4e2;
   --on-surface-variant: #b6bfbb;
 
@@ -184,6 +186,11 @@ footer {
   }
 }
 
+/* Prevent page scrolling behind the image zoom dialog */
+:root:has(#image-zoom[open]) {
+  overflow: hidden;
+}
+
 /* blog post */
 #blog-post {
   /* general */
@@ -204,6 +211,13 @@ footer {
     width: initial;
     max-width: 100%;
     margin-inline: auto;
+  }
+
+  picture img {
+    box-sizing: border-box;
+    border: 1px solid var(--outline-variant);
+    border-radius: var(--br-s);
+    cursor: zoom-in;
   }
 
   blockquote {
@@ -230,6 +244,25 @@ footer {
   }
 
   blockquote > :last-child {
+    margin-bottom: 0;
+  }
+
+  details {
+    padding: var(--size-xs) var(--size-s);
+    border: 1px solid var(--outline-variant);
+    border-radius: var(--br-s);
+    background-color: var(--surface-container);
+  }
+
+  summary {
+    cursor: pointer;
+  }
+
+  details[open] > summary {
+    margin-bottom: var(--size-s);
+  }
+
+  details > :last-child {
     margin-bottom: 0;
   }
 
@@ -402,7 +435,10 @@ footer {
     max-width: 100%;
     overflow-x: auto;
     overflow-y: hidden;
-    padding: 8px 0;
+    padding: 24px var(--size-s);
+    border: 1px dotted var(--outline-variant);
+    border-radius: var(--br-s);
+    background-color: var(--surface-bright);
     -webkit-overflow-scrolling: touch;
     scrollbar-width: none;
   }

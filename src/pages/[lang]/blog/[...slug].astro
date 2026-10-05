@@ -56,6 +56,9 @@ const canonicalURL = new URL(Astro.url.pathname, Astro.site).toString();
       <div class={s.webmentions} data-webmention-target={canonicalURL}></div>
     </div>
   </article>
+  <dialog id="image-zoom" class={s.imageZoom} aria-label="Zoomed image">
+    <img alt="" />
+  </dialog>
 </BaseSite>
 
 <script>
@@ -91,4 +94,41 @@ const canonicalURL = new URL(Astro.url.pathname, Astro.site).toString();
       titleEl.addEventListener("keydown", handleCodeTitleClick);
     }
   }
+
+  // Click an image in the post to show it enlarged in a modal dialog
+  const zoomDialog = document.getElementById(
+    "image-zoom",
+  ) as HTMLDialogElement;
+  const zoomImg = zoomDialog.querySelector("img") as HTMLImageElement;
+
+  function openZoom(img: HTMLImageElement) {
+    zoomImg.src = img.currentSrc || img.src;
+    zoomImg.alt = img.alt;
+    // Never display more CSS pixels than the image has device pixels
+    zoomImg.style.maxWidth = `min(100%, ${
+      img.naturalWidth / window.devicePixelRatio
+    }px)`;
+    zoomDialog.showModal();
+  }
+
+  for (
+    const img of document.querySelectorAll<HTMLImageElement>(
+      "#blog-post picture img",
+    )
+  ) {
+    img.setAttribute("tabindex", "0");
+    img.addEventListener("click", () => openZoom(img));
+    img.addEventListener("keydown", (e) => {
+      if (e.key !== " " && e.key !== "Enter") return;
+      e.preventDefault();
+      openZoom(img);
+    });
+  }
+
+  // Esc closes the dialog natively; a click anywhere closes it too
+  zoomDialog.addEventListener("click", () => zoomDialog.close());
+  zoomDialog.addEventListener(
+    "close",
+    () => zoomImg.removeAttribute("src"),
+  );
 </script>
