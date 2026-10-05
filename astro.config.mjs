@@ -34,5 +34,7 @@ export default defineConfig({
     "/blog/2022autumn_uol_review/": "/ja/blog/2022autumn_uol_review/",
     "/blog/2022s_uol_review/": "/ja/blog/2022s_uol_review/",
     "/blog/enroll_at_uol/": "/ja/blog/enroll_at_uol/",
+    "/en/blog/adaptive-tessellation-of-bezier-surfaces/":
+      "/en/blog/adaptive-watertight-tessellation-of-bezier-surfaces/",
   },
 });
