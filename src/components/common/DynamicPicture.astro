@@ -1,6 +1,8 @@
 ---
 import { type HTMLAttributes } from "astro/types";
 import { Picture } from "astro:assets";
+import path from "node:path";
+import sharp from "sharp";
 import { ALL_IMAGES } from "../../utils/constants";
 
 type Props = {
@@ -8,13 +10,25 @@ type Props = {
   alt: string;
 } & HTMLAttributes<"picture">;
 
-const { src, alt, ...rest } = Astro.props;
+const { src, alt, style, ...rest } = Astro.props;
 const isExternal = src.startsWith("http");
 
 if (!isExternal && !ALL_IMAGES[src]) {
   throw new Error(
     `"${src}" does not exist in glob: "src/assets/**/*.{jpeg,jpg,png,gif}"`,
   );
+}
+
+// Show the first frame of a GIF as an inline background until the animation loads
+let imgStyle = style;
+if (!isExternal && src.endsWith(".gif")) {
+  const firstFrame = await sharp(path.join(process.cwd(), src), { pages: 1 })
+    .webp({ quality: 80 })
+    .toBuffer();
+  const placeholder = `background: url(data:image/webp;base64,${
+    firstFrame.toString("base64")
+  }) center / 100% 100% no-repeat`;
+  imgStyle = [style, placeholder].filter(Boolean).join("; ");
 }
 ---
 
@@ -24,6 +38,7 @@ if (!isExternal && !ALL_IMAGES[src]) {
       src={ALL_IMAGES[src]()}
       formats={["webp"]}
       {alt}
+      style={imgStyle}
       {...rest}
     />
   )
